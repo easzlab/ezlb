@@ -98,10 +98,14 @@ services:
 		t.Fatalf("RunOnce failed: %v", err)
 	}
 
-	// Since RunOnce calls shutdown which closes the lvs manager,
-	// we verify by creating a new server and checking it can reconcile the same config
-	// (this validates the reconcile path works end-to-end)
-	srv2 := newTestServer(t, configPath)
+	// After RunOnce, the lvs manager is closed. Create a new server with a fresh
+	// manager (without flushing IPVS) to verify the reconcile path is idempotent.
+	logger := zap.NewNop()
+	lvsMgr2 := newTestLVSManager(t)
+	srv2, err := newServerWithManager(configPath, lvsMgr2, logger)
+	if err != nil {
+		t.Fatalf("newServerWithManager failed: %v", err)
+	}
 
 	// Verify config was loaded correctly
 	cfg := srv2.configMgr.GetConfig()

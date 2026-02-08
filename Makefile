@@ -12,6 +12,11 @@ build:
 test:
 	go test ./...
 
+# test-linux runs tests serially (-p 1) because IPVS is a global kernel resource.
+# Must be run as root on Linux.
+test-linux:
+	go test -count=1 -p 1 ./...
+
 clean:
 	rm -rf $(BUILD_DIR)/
 

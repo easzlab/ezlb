@@ -3,38 +3,30 @@
 package server
 
 import (
-	"sync"
 	"testing"
 
 	"github.com/easzlab/ezlb/pkg/lvs"
 	"go.uber.org/zap"
 )
 
-// ipvsMu serializes all tests that use the real Linux IPVS handle,
-// because IPVS is a global kernel resource shared across all tests.
-var ipvsMu sync.Mutex
-
 // newTestServer creates a Server backed by the real Linux IPVS handle.
-// It acquires a global lock to prevent concurrent IPVS access between tests,
-// and flushes IPVS rules before and after each test to ensure isolation.
+// Tests must run serially (go test -p 1) because IPVS is a global kernel resource.
+// TestMain handles the initial Flush; each test flushes before and after via Cleanup.
 func newTestServer(t *testing.T, configPath string) *Server {
 	t.Helper()
-	ipvsMu.Lock()
 	logger := zap.NewNop()
 
 	lvsMgr, err := lvs.NewManager(logger)
 	if err != nil {
-		ipvsMu.Unlock()
 		t.Fatalf("lvs.NewManager failed: %v", err)
 	}
 
 	// Flush existing IPVS rules to ensure a clean starting state
 	if err := lvsMgr.Flush(); err != nil {
-		ipvsMu.Unlock()
 		t.Fatalf("failed to flush IPVS rules before test: %v", err)
 	}
-	// Register cleanup to flush after test and release the lock.
-	// Use a separate handle for cleanup because the test may close the manager
+	// Register cleanup to flush after test completes.
+	// Use a separate handle because the test may close the manager
 	// via defer or shutdown() before t.Cleanup runs.
 	t.Cleanup(func() {
 		cleanupHandle, err := lvs.NewIPVSHandle("")
@@ -42,43 +34,34 @@ func newTestServer(t *testing.T, configPath string) *Server {
 			cleanupHandle.Flush()
 			cleanupHandle.Close()
 		}
-		ipvsMu.Unlock()
 	})
 
 	srv, err := newServerWithManager(configPath, lvsMgr, logger)
 	if err != nil {
-		ipvsMu.Unlock()
 		t.Fatalf("newServerWithManager failed: %v", err)
 	}
 	return srv
 }
 
 // newTestLVSManager creates an LVS Manager backed by the real Linux IPVS handle.
-// It acquires a global lock to prevent concurrent IPVS access between tests,
-// and flushes IPVS rules before and after each test to ensure isolation.
+// Tests must run serially (go test -p 1) because IPVS is a global kernel resource.
 func newTestLVSManager(t *testing.T) *lvs.Manager {
 	t.Helper()
-	ipvsMu.Lock()
 	mgr, err := lvs.NewManager(zap.NewNop())
 	if err != nil {
-		ipvsMu.Unlock()
 		t.Fatalf("lvs.NewManager failed: %v", err)
 	}
 	// Flush existing IPVS rules to ensure a clean starting state
 	if err := mgr.Flush(); err != nil {
-		ipvsMu.Unlock()
 		t.Fatalf("failed to flush IPVS rules before test: %v", err)
 	}
-	// Register cleanup to flush after test and release the lock.
-	// Use a separate handle for cleanup because the test may call mgr.Close()
-	// via defer before t.Cleanup runs.
+	// Register cleanup to flush after test completes.
 	t.Cleanup(func() {
 		cleanupHandle, err := lvs.NewIPVSHandle("")
 		if err == nil {
 			cleanupHandle.Flush()
 			cleanupHandle.Close()
 		}
-		ipvsMu.Unlock()
 	})
 	return mgr
 }
