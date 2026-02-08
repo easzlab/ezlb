@@ -5,7 +5,11 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/ezlb -c /etc/ezlb/ezlb.yaml
+ExecStartPre=/sbin/modprobe ip_vs
+ExecStartPre=/sbin/modprobe ip_vs_rr
+ExecStartPre=/sbin/modprobe ip_vs_wrr
+ExecStartPre=/sbin/modprobe ip_vs_lc
+ExecStart=/usr/local/bin/ezlb start -c /etc/ezlb/ezlb.yaml
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5s

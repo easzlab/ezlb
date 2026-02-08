@@ -14,8 +14,11 @@ import (
 )
 
 var (
-	version    = "dev"
-	configPath string
+	BuildTime   string
+	BuildCommit string
+	Version     = "0.1.1"
+	configPath  string
+	showVersion bool
 )
 
 func main() {
@@ -30,42 +33,55 @@ func newRootCommand() *cobra.Command {
 		Use:   "ezlb",
 		Short: "ezlb - IPVS based TCP load balancer",
 		Long:  "A lightweight four-layer TCP load balancer using Linux IPVS with declarative reconcile mode.",
-		RunE:  runDaemon,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if showVersion {
+				fmt.Printf("Version: %s\nBuild commit: %s\nBuild time: %s\n",
+					Version,
+					BuildCommit,
+					BuildTime,
+				)
+				return nil
+			}
+			return cmd.Help()
+		},
 	}
 
-	rootCmd.PersistentFlags().StringVarP(&configPath, "config", "c", "/etc/ezlb/ezlb.yaml", "path to config file")
-
+	rootCmd.Flags().BoolVarP(&showVersion, "version", "v", false, "Show version information")
 	rootCmd.AddCommand(newOnceCommand())
-	rootCmd.AddCommand(newVersionCommand())
+	rootCmd.AddCommand(newStartCommand())
 
 	return rootCmd
 }
 
 func newOnceCommand() *cobra.Command {
-	return &cobra.Command{
+	onceCmd := &cobra.Command{
 		Use:   "once",
 		Short: "Run a single reconcile pass and exit",
 		RunE:  runOnce,
 	}
+
+	onceCmd.Flags().StringVarP(&configPath, "config", "c", "config.yaml", "Path to config file")
+	return onceCmd
 }
 
-func newVersionCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:   "version",
-		Short: "Print version information",
-		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Printf("ezlb version %s\n", version)
-		},
+func newStartCommand() *cobra.Command {
+	startCmd := &cobra.Command{
+		Use:   "start",
+		Short: "Start the server in daemon mode with signal handling.",
+		RunE:  startDaemon,
 	}
+
+	startCmd.Flags().StringVarP(&configPath, "config", "c", "config.yaml", "Path to config file")
+	return startCmd
 }
 
-// runDaemon starts the server in daemon mode with signal handling.
-func runDaemon(cmd *cobra.Command, args []string) error {
+// startDaemon starts the server in daemon mode with signal handling.
+func startDaemon(cmd *cobra.Command, args []string) error {
 	logger := newLogger()
 	defer logger.Sync()
 
 	logger.Info("starting ezlb",
-		zap.String("version", version),
+		zap.String("version", Version),
 		zap.String("config", configPath),
 	)
 
@@ -96,7 +112,7 @@ func runOnce(cmd *cobra.Command, args []string) error {
 	defer logger.Sync()
 
 	logger.Info("running single reconcile",
-		zap.String("version", version),
+		zap.String("version", Version),
 		zap.String("config", configPath),
 	)
 

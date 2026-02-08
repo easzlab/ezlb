@@ -1,32 +1,80 @@
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
-BINARY  := ezlb
+# Project information
+PROJECT_NAME := ezlb
+MODULE_NAME := github.com/easzlab/ezlb
+BUILD_TIME := $(shell date +%Y-%m-%d\ %H:%M:%S)
+BUILD_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+#BUILD_BRANCH := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+
+# Build configuration
 BUILD_DIR := build
 
-LDFLAGS := -ldflags "-X main.version=$(VERSION)"
+# Linker flags for build information
+LDFLAGS := -ldflags "-X 'main.BuildTime=$(BUILD_TIME)' \
+                     -X 'main.BuildCommit=$(BUILD_COMMIT)' \
+                     -s -w -extldflags -static"
 
-.PHONY: build test clean install
+# Default target
+.PHONY: all
+all: clean build
 
-build:
-	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY) ./cmd/ezlb/
+.PHONY: help
+help: ## show help
+	@echo "Available targets: "
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-test:
-	go test ./...
+.PHONY: build
+build: ## build the binary
+	@echo "Building $(PROJECT_NAME) ..."
+	@mkdir -p $(BUILD_DIR)
+	CGO_ENABLED=0 go build $(LDFLAGS) -o build/ezlb cmd/ezlb/main.go
+	@echo "✓ Build completed."
+
+.PHONY: build-dev
+build-dev: ## build the binary with debug info
+	@echo "Building $(PROJECT_NAME) for development..."
+	@mkdir -p $(BUILD_DIR)
+	CGO_ENABLED=0 go build -race -o build/ezlb cmd/ezlb/main.go
+	@echo "✓ Development build completed."
+
+.PHONY: build-linux
+build-linux: ## build the binary for Linux
+	@echo "Building for Linux..."
+	@mkdir -p $(BUILD_DIR)
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o build/ezlb-linux-amd64 cmd/ezlb/main.go
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o build/ezlb-linux-arm64 cmd/ezlb/main.go
+	@echo "✓ Linux build completed"
+
+.PHONY: test
+test: ## run unit tests
+	@echo "Running unit tests..."
+	@go test -v ./...
+	@echo "✓ Tests completed"
 
 # test-linux runs tests serially (-p 1) because IPVS is a global kernel resource.
 # Must be run as root on Linux.
-test-linux:
-	go test -count=1 -p 1 ./...
+.PHONY: test-linux
+test-linux: ## run unit tests for Linux
+	@echo "Running unit tests for linux..."
+	@go test -count=1 -p 1 ./...
+	@echo "✓ Tests completed"
 
 # e2e tests compile the ezlb binary and verify IPVS kernel rules end-to-end.
 # Must be run as root on Linux.
-test-e2e:
-	go test -count=1 -v -p 1 ./tests/e2e/
+.PHONY: test-e2e
+test-e2e: ## run end-to-end tests for Linux
+	@echo "Running e2e tests for linux..."
+	@go test -count=1 -v -p 1 ./tests/e2e/
+	@echo "✓ Tests completed"
 
-clean:
-	rm -rf $(BUILD_DIR)/
+.PHONY: clean
+clean: ## clean build artifacts
+	@echo "Cleaning build artifacts..."
+	@rm -rf $(BUILD_DIR)
+	@echo "✓ Clean completed"
 
-install: build
-	install -d /usr/local/bin
-	install -m 755 $(BUILD_DIR)/$(BINARY) /usr/local/bin/$(BINARY)
-	install -d /etc/ezlb
-	install -m 644 examples/ezlb.yaml /etc/ezlb/ezlb.yaml
+.PHONY: update
+update: ## update dependencies
+	@echo "Updating dependencies..."
+	@go get -u ./...
+	@go mod tidy
+	@echo "✓ Dependencies updated"
