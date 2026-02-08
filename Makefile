@@ -33,7 +33,7 @@ build: ## build the binary
 build-dev: ## build the binary with debug info
 	@echo "Building $(PROJECT_NAME) for development..."
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=0 go build -race -o build/ezlb cmd/ezlb/main.go
+	CGO_ENABLED=1 go build -race -o build/ezlb cmd/ezlb/main.go
 	@echo "✓ Development build completed."
 
 .PHONY: build-linux
