@@ -32,12 +32,10 @@ func boolPtr(b bool) *bool {
 }
 
 // newReconcilerTestEnv creates a Manager, mock HealthChecker, and Reconciler for testing.
+// It uses newTestManager which handles platform-specific setup and IPVS cleanup.
 func newReconcilerTestEnv(t *testing.T) (*Manager, *mockHealthChecker, *Reconciler) {
 	t.Helper()
-	mgr, err := NewManager(zap.NewNop())
-	if err != nil {
-		t.Fatalf("NewManager failed: %v", err)
-	}
+	mgr := newTestManager(t)
 	healthMgr := newMockHealthChecker()
 	reconciler := NewReconciler(mgr, healthMgr, zap.NewNop())
 	return mgr, healthMgr, reconciler

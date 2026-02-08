@@ -141,3 +141,12 @@ func (m *Manager) DeleteDestination(svc *Service, dst *Destination) error {
 	)
 	return nil
 }
+
+// Flush removes all IPVS services and destinations.
+func (m *Manager) Flush() error {
+	if err := m.handle.Flush(); err != nil {
+		return fmt.Errorf("failed to flush IPVS rules: %w", err)
+	}
+	m.logger.Info("flushed all IPVS rules")
+	return nil
+}

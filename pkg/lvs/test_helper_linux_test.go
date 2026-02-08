@@ -10,19 +10,21 @@ import (
 )
 
 // newTestManager creates a Manager backed by the real Linux IPVS handle.
-// It flushes any existing IPVS rules before returning to ensure a clean state.
+// It flushes any existing IPVS rules before and after each test to ensure isolation.
 func newTestManager(t *testing.T) *Manager {
 	t.Helper()
 	mgr, err := NewManager(zap.NewNop())
 	if err != nil {
 		t.Fatalf("NewManager failed: %v", err)
 	}
-	// Flush existing IPVS rules to ensure test isolation
-	handle, _ := NewIPVSHandle("")
-	if err := handle.Flush(); err != nil {
-		t.Fatalf("failed to flush IPVS rules: %v", err)
+	// Flush existing IPVS rules to ensure a clean starting state
+	if err := mgr.Flush(); err != nil {
+		t.Fatalf("failed to flush IPVS rules before test: %v", err)
 	}
-	handle.Close()
+	// Register cleanup to flush after test completes
+	t.Cleanup(func() {
+		mgr.Flush()
+	})
 	return mgr
 }
 
