@@ -1,0 +1,474 @@
+package config
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"go.uber.org/zap"
+)
+
+// boolPtr is a helper to create a pointer to a bool value.
+func boolPtr(b bool) *bool {
+	return &b
+}
+
+// validServiceConfig returns a minimal valid ServiceConfig for testing.
+func validServiceConfig() ServiceConfig {
+	return ServiceConfig{
+		Name:      "test-svc",
+		Listen:    "10.0.0.1:80",
+		Protocol:  "tcp",
+		Scheduler: "rr",
+		HealthCheck: HealthCheckConfig{
+			Enabled: boolPtr(true),
+		},
+		Backends: []BackendConfig{
+			{Address: "192.168.1.1:8080", Weight: 1},
+		},
+	}
+}
+
+// validConfig returns a minimal valid Config for testing.
+func validConfig() *Config {
+	svc := validServiceConfig()
+	return &Config{
+		Global:   GlobalConfig{LogLevel: "info"},
+		Services: []ServiceConfig{svc},
+	}
+}
+
+// --- Validate function tests ---
+
+func TestValidate_ValidConfig(t *testing.T) {
+	cfg := validConfig()
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("expected valid config to pass validation, got: %v", err)
+	}
+}
+
+func TestValidate_EmptyServices(t *testing.T) {
+	cfg := &Config{Services: []ServiceConfig{}}
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for empty services, got nil")
+	}
+}
+
+func TestValidate_ServiceNameEmpty(t *testing.T) {
+	cfg := validConfig()
+	cfg.Services[0].Name = ""
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for empty service name, got nil")
+	}
+}
+
+func TestValidate_ServiceNameDuplicate(t *testing.T) {
+	svc1 := validServiceConfig()
+	svc2 := validServiceConfig()
+	svc2.Listen = "10.0.0.2:80"
+	cfg := &Config{Services: []ServiceConfig{svc1, svc2}}
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for duplicate service name, got nil")
+	}
+}
+
+func TestValidate_ListenAddressInvalid(t *testing.T) {
+	cfg := validConfig()
+	cfg.Services[0].Listen = "not-an-address"
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for invalid listen address, got nil")
+	}
+}
+
+func TestValidate_ListenIPInvalid(t *testing.T) {
+	cfg := validConfig()
+	cfg.Services[0].Listen = "abc:80"
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for invalid listen IP, got nil")
+	}
+}
+
+func TestValidate_ListenPortZero(t *testing.T) {
+	cfg := validConfig()
+	cfg.Services[0].Listen = "10.0.0.1:0"
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for listen port 0, got nil")
+	}
+}
+
+func TestValidate_ListenAddressDuplicate(t *testing.T) {
+	svc1 := validServiceConfig()
+	svc2 := validServiceConfig()
+	svc2.Name = "test-svc-2"
+	// same listen address as svc1
+	cfg := &Config{Services: []ServiceConfig{svc1, svc2}}
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for duplicate listen address, got nil")
+	}
+}
+
+func TestValidate_ProtocolEmptyDefaultsTCP(t *testing.T) {
+	cfg := validConfig()
+	cfg.Services[0].Protocol = ""
+	err := Validate(cfg)
+	if err != nil {
+		t.Fatalf("expected no error when protocol is empty (defaults to tcp), got: %v", err)
+	}
+	if cfg.Services[0].Protocol != "tcp" {
+		t.Errorf("expected protocol to be set to 'tcp', got %q", cfg.Services[0].Protocol)
+	}
+}
+
+func TestValidate_ProtocolUnsupported(t *testing.T) {
+	cfg := validConfig()
+	cfg.Services[0].Protocol = "udp"
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for unsupported protocol, got nil")
+	}
+}
+
+func TestValidate_SchedulerUnsupported(t *testing.T) {
+	cfg := validConfig()
+	cfg.Services[0].Scheduler = "random"
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for unsupported scheduler, got nil")
+	}
+}
+
+func TestValidate_SchedulerValidValues(t *testing.T) {
+	for _, sched := range []string{"rr", "wrr", "lc"} {
+		cfg := validConfig()
+		cfg.Services[0].Scheduler = sched
+		if err := Validate(cfg); err != nil {
+			t.Errorf("expected scheduler %q to be valid, got: %v", sched, err)
+		}
+	}
+}
+
+func TestValidate_HealthCheckIntervalInvalid(t *testing.T) {
+	cfg := validConfig()
+	cfg.Services[0].HealthCheck.Enabled = boolPtr(true)
+	cfg.Services[0].HealthCheck.Interval = "abc"
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for invalid health_check.interval, got nil")
+	}
+}
+
+func TestValidate_HealthCheckTimeoutInvalid(t *testing.T) {
+	cfg := validConfig()
+	cfg.Services[0].HealthCheck.Enabled = boolPtr(true)
+	cfg.Services[0].HealthCheck.Timeout = "xyz"
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for invalid health_check.timeout, got nil")
+	}
+}
+
+func TestValidate_HealthCheckDisabledSkipsIntervalValidation(t *testing.T) {
+	cfg := validConfig()
+	cfg.Services[0].HealthCheck.Enabled = boolPtr(false)
+	cfg.Services[0].HealthCheck.Interval = "invalid-duration"
+	cfg.Services[0].HealthCheck.Timeout = "also-invalid"
+	err := Validate(cfg)
+	if err != nil {
+		t.Fatalf("expected no error when health check is disabled, got: %v", err)
+	}
+}
+
+func TestValidate_BackendsEmpty(t *testing.T) {
+	cfg := validConfig()
+	cfg.Services[0].Backends = nil
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for empty backends, got nil")
+	}
+}
+
+func TestValidate_BackendAddressEmpty(t *testing.T) {
+	cfg := validConfig()
+	cfg.Services[0].Backends[0].Address = ""
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for empty backend address, got nil")
+	}
+}
+
+func TestValidate_BackendAddressInvalid(t *testing.T) {
+	cfg := validConfig()
+	cfg.Services[0].Backends[0].Address = "not-valid"
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for invalid backend address, got nil")
+	}
+}
+
+func TestValidate_BackendIPInvalid(t *testing.T) {
+	cfg := validConfig()
+	cfg.Services[0].Backends[0].Address = "abc:8080"
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for invalid backend IP, got nil")
+	}
+}
+
+func TestValidate_BackendPortZero(t *testing.T) {
+	cfg := validConfig()
+	cfg.Services[0].Backends[0].Address = "192.168.1.1:0"
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for backend port 0, got nil")
+	}
+}
+
+func TestValidate_BackendAddressDuplicate(t *testing.T) {
+	cfg := validConfig()
+	cfg.Services[0].Backends = append(cfg.Services[0].Backends, BackendConfig{
+		Address: "192.168.1.1:8080",
+		Weight:  2,
+	})
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for duplicate backend address, got nil")
+	}
+}
+
+func TestValidate_BackendWeightZero(t *testing.T) {
+	cfg := validConfig()
+	cfg.Services[0].Backends[0].Weight = 0
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for backend weight 0, got nil")
+	}
+}
+
+func TestValidate_BackendWeightNegative(t *testing.T) {
+	cfg := validConfig()
+	cfg.Services[0].Backends[0].Weight = -1
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for negative backend weight, got nil")
+	}
+}
+
+// --- HealthCheckConfig method tests ---
+
+func TestHealthCheckConfig_IsEnabled_DefaultTrue(t *testing.T) {
+	hc := HealthCheckConfig{}
+	if !hc.IsEnabled() {
+		t.Error("expected IsEnabled to return true when Enabled is nil")
+	}
+}
+
+func TestHealthCheckConfig_IsEnabled_ExplicitTrue(t *testing.T) {
+	hc := HealthCheckConfig{Enabled: boolPtr(true)}
+	if !hc.IsEnabled() {
+		t.Error("expected IsEnabled to return true when Enabled is true")
+	}
+}
+
+func TestHealthCheckConfig_IsEnabled_ExplicitFalse(t *testing.T) {
+	hc := HealthCheckConfig{Enabled: boolPtr(false)}
+	if hc.IsEnabled() {
+		t.Error("expected IsEnabled to return false when Enabled is false")
+	}
+}
+
+func TestHealthCheckConfig_GetInterval_Default(t *testing.T) {
+	hc := HealthCheckConfig{}
+	if hc.GetInterval() != 5*time.Second {
+		t.Errorf("expected default interval 5s, got %v", hc.GetInterval())
+	}
+}
+
+func TestHealthCheckConfig_GetInterval_Invalid(t *testing.T) {
+	hc := HealthCheckConfig{Interval: "invalid"}
+	if hc.GetInterval() != 5*time.Second {
+		t.Errorf("expected fallback interval 5s for invalid value, got %v", hc.GetInterval())
+	}
+}
+
+func TestHealthCheckConfig_GetInterval_Valid(t *testing.T) {
+	hc := HealthCheckConfig{Interval: "10s"}
+	if hc.GetInterval() != 10*time.Second {
+		t.Errorf("expected interval 10s, got %v", hc.GetInterval())
+	}
+}
+
+func TestHealthCheckConfig_GetTimeout_Default(t *testing.T) {
+	hc := HealthCheckConfig{}
+	if hc.GetTimeout() != 3*time.Second {
+		t.Errorf("expected default timeout 3s, got %v", hc.GetTimeout())
+	}
+}
+
+func TestHealthCheckConfig_GetTimeout_Invalid(t *testing.T) {
+	hc := HealthCheckConfig{Timeout: "bad"}
+	if hc.GetTimeout() != 3*time.Second {
+		t.Errorf("expected fallback timeout 3s for invalid value, got %v", hc.GetTimeout())
+	}
+}
+
+func TestHealthCheckConfig_GetTimeout_Valid(t *testing.T) {
+	hc := HealthCheckConfig{Timeout: "7s"}
+	if hc.GetTimeout() != 7*time.Second {
+		t.Errorf("expected timeout 7s, got %v", hc.GetTimeout())
+	}
+}
+
+func TestHealthCheckConfig_GetFailCount_Default(t *testing.T) {
+	hc := HealthCheckConfig{}
+	if hc.GetFailCount() != 3 {
+		t.Errorf("expected default fail_count 3, got %d", hc.GetFailCount())
+	}
+}
+
+func TestHealthCheckConfig_GetFailCount_Negative(t *testing.T) {
+	hc := HealthCheckConfig{FailCount: -1}
+	if hc.GetFailCount() != 3 {
+		t.Errorf("expected default fail_count 3 for negative value, got %d", hc.GetFailCount())
+	}
+}
+
+func TestHealthCheckConfig_GetFailCount_Valid(t *testing.T) {
+	hc := HealthCheckConfig{FailCount: 5}
+	if hc.GetFailCount() != 5 {
+		t.Errorf("expected fail_count 5, got %d", hc.GetFailCount())
+	}
+}
+
+func TestHealthCheckConfig_GetRiseCount_Default(t *testing.T) {
+	hc := HealthCheckConfig{}
+	if hc.GetRiseCount() != 2 {
+		t.Errorf("expected default rise_count 2, got %d", hc.GetRiseCount())
+	}
+}
+
+func TestHealthCheckConfig_GetRiseCount_Negative(t *testing.T) {
+	hc := HealthCheckConfig{RiseCount: -1}
+	if hc.GetRiseCount() != 2 {
+		t.Errorf("expected default rise_count 2 for negative value, got %d", hc.GetRiseCount())
+	}
+}
+
+func TestHealthCheckConfig_GetRiseCount_Valid(t *testing.T) {
+	hc := HealthCheckConfig{RiseCount: 4}
+	if hc.GetRiseCount() != 4 {
+		t.Errorf("expected rise_count 4, got %d", hc.GetRiseCount())
+	}
+}
+
+// --- Manager loading tests ---
+
+const validYAML = `
+global:
+  log_level: info
+services:
+  - name: web-service
+    listen: 10.0.0.1:80
+    protocol: tcp
+    scheduler: wrr
+    health_check:
+      enabled: true
+      interval: 5s
+      timeout: 3s
+      fail_count: 3
+      rise_count: 2
+    backends:
+      - address: 192.168.1.10:8080
+        weight: 5
+      - address: 192.168.1.11:8080
+        weight: 3
+`
+
+func writeTestYAML(t *testing.T, content string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.yaml")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write test yaml: %v", err)
+	}
+	return path
+}
+
+func TestManager_LoadValidYAML(t *testing.T) {
+	path := writeTestYAML(t, validYAML)
+
+	mgr, err := NewManager(path, zap.NewNop())
+	if err != nil {
+		t.Fatalf("expected NewManager to succeed, got: %v", err)
+	}
+
+	cfg := mgr.GetConfig()
+	if cfg == nil {
+		t.Fatal("expected GetConfig to return non-nil config")
+	}
+	if len(cfg.Services) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(cfg.Services))
+	}
+	if cfg.Services[0].Name != "web-service" {
+		t.Errorf("expected service name 'web-service', got %q", cfg.Services[0].Name)
+	}
+	if cfg.Services[0].Scheduler != "wrr" {
+		t.Errorf("expected scheduler 'wrr', got %q", cfg.Services[0].Scheduler)
+	}
+	if len(cfg.Services[0].Backends) != 2 {
+		t.Errorf("expected 2 backends, got %d", len(cfg.Services[0].Backends))
+	}
+}
+
+func TestManager_LoadNonExistentFile(t *testing.T) {
+	_, err := NewManager("/nonexistent/path/config.yaml", zap.NewNop())
+	if err == nil {
+		t.Fatal("expected error for non-existent config file, got nil")
+	}
+}
+
+func TestManager_LoadInvalidYAML(t *testing.T) {
+	path := writeTestYAML(t, `{{{invalid yaml`)
+	_, err := NewManager(path, zap.NewNop())
+	if err == nil {
+		t.Fatal("expected error for invalid YAML, got nil")
+	}
+}
+
+func TestManager_LoadValidationFailure(t *testing.T) {
+	invalidCfg := `
+global:
+  log_level: info
+services:
+  - name: bad-service
+    listen: 10.0.0.1:80
+    protocol: tcp
+    scheduler: rr
+    backends: []
+`
+	path := writeTestYAML(t, invalidCfg)
+	_, err := NewManager(path, zap.NewNop())
+	if err == nil {
+		t.Fatal("expected error for config that fails validation, got nil")
+	}
+}
+
+func TestManager_OnChangeChannel(t *testing.T) {
+	path := writeTestYAML(t, validYAML)
+	mgr, err := NewManager(path, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager failed: %v", err)
+	}
+
+	ch := mgr.OnChange()
+	if ch == nil {
+		t.Fatal("expected OnChange to return non-nil channel")
+	}
+}

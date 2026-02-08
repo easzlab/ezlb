@@ -1,0 +1,49 @@
+global:
+  log_level: info
+
+services:
+  - name: web-service
+    listen: 10.0.0.1:80
+    protocol: tcp
+    scheduler: wrr
+    health_check:
+      enabled: true
+      interval: 5s
+      timeout: 3s
+      fail_count: 3
+      rise_count: 2
+    backends:
+      - address: 192.168.1.10:8080
+        weight: 5
+      - address: 192.168.1.11:8080
+        weight: 3
+      - address: 192.168.1.12:8080
+        weight: 2
+
+  - name: api-service
+    listen: 10.0.0.1:443
+    protocol: tcp
+    scheduler: lc
+    health_check:
+      enabled: true
+      interval: 10s
+      timeout: 5s
+      fail_count: 5
+      rise_count: 3
+    backends:
+      - address: 192.168.2.10:8443
+        weight: 1
+      - address: 192.168.2.11:8443
+        weight: 1
+
+  - name: internal-service
+    listen: 10.0.0.2:9090
+    protocol: tcp
+    scheduler: rr
+    health_check:
+      enabled: false
+    backends:
+      - address: 192.168.3.10:9090
+        weight: 1
+      - address: 192.168.3.11:9090
+        weight: 1

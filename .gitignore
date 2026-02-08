@@ -1,0 +1,13 @@
+.aone_copilot
+
+build/
+
+temp/
+
+down/
+
+logs
+
+coverage.out
+coverage.html
+

@@ -1,0 +1,15 @@
+[Unit]
+Description=ezlb - IPVS TCP Load Balancer
+Documentation=https://github.com/easzlab/ezlb
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/ezlb -c /etc/ezlb/ezlb.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
