@@ -45,17 +45,17 @@ build-linux: ## build the binary for Linux
 	@echo "✓ Linux build completed"
 
 .PHONY: test
-test: ## run unit tests
+test: ## run unit tests (all platforms, using fake IPVS)
 	@echo "Running unit tests..."
 	@go test -v ./...
 	@echo "✓ Tests completed"
 
-# test-linux runs tests serially (-p 1) because IPVS is a global kernel resource.
+# test-linux runs tests with real IPVS handle, serially (-p 1) because IPVS is a global kernel resource.
 # Must be run as root on Linux.
 .PHONY: test-linux
-test-linux: ## run unit tests for Linux
+test-linux: ## run unit tests with real IPVS (Linux only)
 	@echo "Running unit tests for linux..."
-	@go test -count=1 -p 1 ./...
+	@go test -count=1 -p 1 -tags integration ./...
 	@echo "✓ Tests completed"
 
 # e2e tests compile the ezlb binary and verify IPVS kernel rules end-to-end.
