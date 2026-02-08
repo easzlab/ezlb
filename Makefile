@@ -17,6 +17,11 @@ test:
 test-linux:
 	go test -count=1 -p 1 ./...
 
+# e2e tests compile the ezlb binary and verify IPVS kernel rules end-to-end.
+# Must be run as root on Linux.
+test-e2e:
+	go test -count=1 -v -p 1 ./tests/e2e/
+
 clean:
 	rm -rf $(BUILD_DIR)/
 
