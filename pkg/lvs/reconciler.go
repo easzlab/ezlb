@@ -65,7 +65,11 @@ func (r *Reconciler) Reconcile(desiredConfigs []config.ServiceConfig) error {
 	actualMap := make(map[ServiceKey]*Service)
 	for _, svc := range actualServices {
 		key := ServiceKeyFromIPVS(svc)
-		if r.managed[key] {
+		// Include services that are either managed by ezlb or present in the
+		// desired state. This ensures that `once` mode (fresh Reconciler with
+		// empty managed map) can still detect and update pre-existing IPVS
+		// services that match the current config, avoiding duplicate creation.
+		if r.managed[key] || desiredMap[key] != nil {
 			actualMap[key] = svc
 		}
 	}
@@ -84,7 +88,8 @@ func (r *Reconciler) Reconcile(desiredConfigs []config.ServiceConfig) error {
 			}
 			r.managed[key] = true
 		} else {
-			// Service exists -> check if scheduler needs update
+			// Service exists -> mark as managed and check if scheduler needs update
+			r.managed[key] = true
 			if actual.SchedName != desired.service.SchedName {
 				if err := r.manager.UpdateService(desired.service); err != nil {
 					reconcileErrors = append(reconcileErrors, fmt.Errorf("update service %s: %w", key, err))
