@@ -26,6 +26,15 @@ func NewManager(logger *zap.Logger) (*Manager, error) {
 	}, nil
 }
 
+// newManagerWithHandle creates a Manager with a pre-initialized IPVSHandle.
+// This is used in tests to inject a specific handle implementation.
+func newManagerWithHandle(handle IPVSHandle, logger *zap.Logger) *Manager {
+	return &Manager{
+		handle: handle,
+		logger: logger,
+	}
+}
+
 // Close releases the IPVS handle.
 func (m *Manager) Close() {
 	m.handle.Close()

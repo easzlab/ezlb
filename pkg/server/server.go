@@ -21,16 +21,22 @@ type Server struct {
 
 // NewServer initializes all modules and returns a ready-to-run Server.
 func NewServer(configPath string, logger *zap.Logger) (*Server, error) {
-	// Initialize config manager
-	configMgr, err := config.NewManager(configPath, logger.Named("config"))
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize config manager: %w", err)
-	}
-
 	// Initialize IPVS manager
 	lvsMgr, err := lvs.NewManager(logger.Named("lvs"))
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize IPVS manager: %w", err)
+	}
+
+	return newServerWithManager(configPath, lvsMgr, logger)
+}
+
+// newServerWithManager initializes a Server with a pre-created LVS Manager.
+// This allows tests to inject a platform-appropriate Manager instance.
+func newServerWithManager(configPath string, lvsMgr *lvs.Manager, logger *zap.Logger) (*Server, error) {
+	// Initialize config manager
+	configMgr, err := config.NewManager(configPath, logger.Named("config"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize config manager: %w", err)
 	}
 
 	server := &Server{

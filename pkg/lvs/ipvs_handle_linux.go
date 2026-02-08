@@ -3,8 +3,6 @@
 package lvs
 
 import (
-	"net"
-
 	mobyipvs "github.com/moby/ipvs"
 )
 
@@ -160,14 +158,4 @@ func fromMobyDestination(md *mobyipvs.Destination) *Destination {
 			BPSIn:       md.Stats.BPSIn,
 		},
 	}
-}
-
-// cloneIP returns a copy of the given IP to avoid shared slice references.
-func cloneIP(ip net.IP) net.IP {
-	if ip == nil {
-		return nil
-	}
-	dup := make(net.IP, len(ip))
-	copy(dup, ip)
-	return dup
 }

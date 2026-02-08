@@ -3,31 +3,9 @@
 package lvs
 
 import (
-	"net"
 	"sync"
 	"testing"
 )
-
-func newTestService(address string, port uint16, protocol uint16, scheduler string) *Service {
-	return &Service{
-		Address:       net.ParseIP(address),
-		Protocol:      protocol,
-		Port:          port,
-		SchedName:     scheduler,
-		AddressFamily: 2, // AF_INET
-		Netmask:       0xFFFFFFFF,
-	}
-}
-
-func newTestDestination(address string, port uint16, weight int) *Destination {
-	return &Destination{
-		Address:         net.ParseIP(address),
-		Port:            port,
-		Weight:          weight,
-		ConnectionFlags: ConnectionFlagMasq,
-		AddressFamily:   2, // AF_INET
-	}
-}
 
 func TestFakeHandle_NewAndGetServices(t *testing.T) {
 	handle, err := NewIPVSHandle("")

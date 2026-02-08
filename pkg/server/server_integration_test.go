@@ -1,5 +1,3 @@
-//go:build !linux
-
 package server
 
 import (
@@ -93,10 +91,7 @@ services:
 	dir := t.TempDir()
 	configPath := writeYAMLFile(t, dir, configYAML)
 
-	srv, err := NewServer(configPath, zap.NewNop())
-	if err != nil {
-		t.Fatalf("NewServer failed: %v", err)
-	}
+	srv := newTestServer(t, configPath)
 
 	// RunOnce performs a single reconcile and shuts down
 	if err := srv.RunOnce(); err != nil {
@@ -106,10 +101,7 @@ services:
 	// Since RunOnce calls shutdown which closes the lvs manager,
 	// we verify by creating a new server and checking it can reconcile the same config
 	// (this validates the reconcile path works end-to-end)
-	srv2, err := NewServer(configPath, zap.NewNop())
-	if err != nil {
-		t.Fatalf("second NewServer failed: %v", err)
-	}
+	srv2 := newTestServer(t, configPath)
 
 	// Verify config was loaded correctly
 	cfg := srv2.configMgr.GetConfig()
@@ -151,10 +143,7 @@ services:
 	dir := t.TempDir()
 	configPath := writeYAMLFile(t, dir, configYAML)
 
-	srv, err := NewServer(configPath, zap.NewNop())
-	if err != nil {
-		t.Fatalf("NewServer failed: %v", err)
-	}
+	srv := newTestServer(t, configPath)
 
 	// Perform initial reconcile without shutting down to inspect IPVS state
 	cfg := srv.configMgr.GetConfig()
@@ -209,10 +198,7 @@ services:
 	dir := t.TempDir()
 	configPath := writeYAMLFile(t, dir, initialYAML)
 
-	srv, err := NewServer(configPath, zap.NewNop())
-	if err != nil {
-		t.Fatalf("NewServer failed: %v", err)
-	}
+	srv := newTestServer(t, configPath)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -326,11 +312,8 @@ services:
 		t.Fatalf("config.NewManager failed: %v", err)
 	}
 
-	// Create IPVS manager (uses fakeHandle on non-Linux)
-	lvsMgr, err := lvs.NewManager(logger)
-	if err != nil {
-		t.Fatalf("lvs.NewManager failed: %v", err)
-	}
+	// Create IPVS manager (platform-appropriate: fakeHandle on macOS, real IPVS on Linux)
+	lvsMgr := newTestLVSManager(t)
 	defer lvsMgr.Close()
 
 	// Create controllable health checker
@@ -406,10 +389,7 @@ services:
 	dir := t.TempDir()
 	configPath := writeYAMLFile(t, dir, configYAML)
 
-	srv, err := NewServer(configPath, zap.NewNop())
-	if err != nil {
-		t.Fatalf("NewServer failed: %v", err)
-	}
+	srv := newTestServer(t, configPath)
 
 	ctx, cancel := context.WithCancel(context.Background())
 

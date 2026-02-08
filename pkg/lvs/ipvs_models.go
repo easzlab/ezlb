@@ -58,22 +58,32 @@ type IPVSConfig struct {
 	TimeoutUDP    time.Duration
 }
 
+// cloneIP returns a copy of the given IP to avoid shared slice references.
+func cloneIP(ip net.IP) net.IP {
+	if ip == nil {
+		return nil
+	}
+	dup := make(net.IP, len(ip))
+	copy(dup, ip)
+	return dup
+}
+
 // Destination forwarding method constants.
 const (
-	ConnectionFlagFwdMask    = 0x0007
-	ConnectionFlagMasq       = 0x0000
-	ConnectionFlagLocalNode  = 0x0001
-	ConnectionFlagTunnel     = 0x0002
+	ConnectionFlagFwdMask     = 0x0007
+	ConnectionFlagMasq        = 0x0000
+	ConnectionFlagLocalNode   = 0x0001
+	ConnectionFlagTunnel      = 0x0002
 	ConnectionFlagDirectRoute = 0x0003
 )
 
 // Scheduling algorithm constants.
 const (
-	RoundRobin             = "rr"
-	LeastConnection        = "lc"
-	DestinationHashing     = "dh"
-	SourceHashing          = "sh"
-	WeightedRoundRobin     = "wrr"
+	RoundRobin              = "rr"
+	LeastConnection         = "lc"
+	DestinationHashing      = "dh"
+	SourceHashing           = "sh"
+	WeightedRoundRobin      = "wrr"
 	WeightedLeastConnection = "wlc"
 )
 

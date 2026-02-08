@@ -1,23 +1,9 @@
-//go:build !linux
-
 package lvs
 
 import (
 	"net"
 	"testing"
-
-	"go.uber.org/zap"
 )
-
-// newTestManager creates a Manager with a fakeHandle for testing.
-func newTestManager(t *testing.T) *Manager {
-	t.Helper()
-	mgr, err := NewManager(zap.NewNop())
-	if err != nil {
-		t.Fatalf("NewManager failed: %v", err)
-	}
-	return mgr
-}
 
 func TestManager_CreateService_Success(t *testing.T) {
 	mgr := newTestManager(t)

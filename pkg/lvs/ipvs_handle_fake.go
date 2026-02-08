@@ -4,7 +4,6 @@ package lvs
 
 import (
 	"fmt"
-	"net"
 	"sync"
 )
 
@@ -200,7 +199,7 @@ func (h *fakeHandle) Flush() error {
 // cloneService creates a deep copy of a Service.
 func cloneService(svc *Service) *Service {
 	return &Service{
-		Address:       cloneFakeIP(svc.Address),
+		Address:       cloneIP(svc.Address),
 		Protocol:      svc.Protocol,
 		Port:          svc.Port,
 		FWMark:        svc.FWMark,
@@ -217,7 +216,7 @@ func cloneService(svc *Service) *Service {
 // cloneDestination creates a deep copy of a Destination.
 func cloneDestination(dst *Destination) *Destination {
 	return &Destination{
-		Address:             cloneFakeIP(dst.Address),
+		Address:             cloneIP(dst.Address),
 		Port:                dst.Port,
 		Weight:              dst.Weight,
 		ConnectionFlags:     dst.ConnectionFlags,
@@ -228,14 +227,4 @@ func cloneDestination(dst *Destination) *Destination {
 		InactiveConnections: dst.InactiveConnections,
 		Stats:               dst.Stats,
 	}
-}
-
-// cloneFakeIP returns a copy of the given IP to avoid shared slice references.
-func cloneFakeIP(ip net.IP) net.IP {
-	if ip == nil {
-		return nil
-	}
-	dup := make(net.IP, len(ip))
-	copy(dup, ip)
-	return dup
 }
