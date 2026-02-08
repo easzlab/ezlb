@@ -42,23 +42,23 @@ func runEzlbOnceExpectFailure(t *testing.T, configPath string) (string, string) 
 	return stdout.String(), stderr.String()
 }
 
-// runEzlbVersion executes `ezlb version` and returns the output.
+// runEzlbVersion executes `ezlb -v` and returns the output.
 func runEzlbVersion(t *testing.T) string {
 	t.Helper()
 	var stdout bytes.Buffer
-	cmd := exec.Command(ezlbBinary, "version")
+	cmd := exec.Command(ezlbBinary, "-v")
 	cmd.Stdout = &stdout
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("ezlb version failed: %v", err)
+		t.Fatalf("ezlb -v failed: %v", err)
 	}
 	return stdout.String()
 }
 
-// runEzlbDaemon starts `ezlb -c configPath` in daemon mode and returns the exec.Cmd.
+// runEzlbDaemon starts `ezlb start -c configPath` in daemon mode and returns the exec.Cmd.
 // The caller is responsible for stopping the process.
 func runEzlbDaemon(t *testing.T, configPath string) *exec.Cmd {
 	t.Helper()
-	cmd := exec.Command(ezlbBinary, "-c", configPath)
+	cmd := exec.Command(ezlbBinary, "start", "-c", configPath)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {

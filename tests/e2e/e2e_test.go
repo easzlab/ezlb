@@ -440,14 +440,14 @@ services:
 
 func TestE2E_Version(t *testing.T) {
 	var stdout bytes.Buffer
-	cmd := exec.Command(ezlbBinary, "version")
+	cmd := exec.Command(ezlbBinary, "-v")
 	cmd.Stdout = &stdout
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("ezlb version failed: %v", err)
+		t.Fatalf("ezlb -v failed: %v", err)
 	}
 
 	output := stdout.String()
-	if !strings.Contains(output, "ezlb version") {
-		t.Errorf("expected output to contain 'ezlb version', got %q", output)
+	if !strings.Contains(output, "Version:") {
+		t.Errorf("expected output to contain 'Version:', got %q", output)
 	}
 }
