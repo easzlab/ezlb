@@ -129,6 +129,9 @@ func ConfigToIPVSService(svcCfg config.ServiceConfig) (*Service, error) {
 	if ipAddress == nil {
 		return nil, fmt.Errorf("invalid IP address %q", host)
 	}
+	if ipv4 := ipAddress.To4(); ipv4 != nil {
+		ipAddress = ipv4
+	}
 
 	protocol, err := protocolFromString(svcCfg.Protocol)
 	if err != nil {
@@ -162,6 +165,9 @@ func ConfigToIPVSDestination(backendCfg config.BackendConfig) (*Destination, err
 	ipAddress := net.ParseIP(host)
 	if ipAddress == nil {
 		return nil, fmt.Errorf("invalid IP address %q", host)
+	}
+	if ipv4 := ipAddress.To4(); ipv4 != nil {
+		ipAddress = ipv4
 	}
 
 	family := addressFamilyFromIP(ipAddress)
