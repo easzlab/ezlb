@@ -1,27 +1,34 @@
 # ezlb
 
-基于 Linux IPVS 的四层 TCP 负载均衡工具，采用声明式 Reconcile 模式动态管理 IPVS 服务。
+English | [中文](README_CN.md)
 
-## 特性
+A lightweight Layer-4 TCP load balancer based on Linux IPVS, using declarative reconcile mode to dynamically manage IPVS services.
 
-- **IPVS 内核级负载均衡**：基于 Linux IPVS 实现高性能四层转发
-- **声明式 Reconcile**：自动对比期望状态与实际 IPVS 规则，增量同步变更
-- **多种调度算法**：支持轮询 (rr)、加权轮询 (wrr)、最少连接 (lc)
-- **TCP 健康检查**：每个服务独立配置检查参数，支持禁用
-- **配置热加载**：修改配置文件自动触发 Reconcile，无需重启
-- **systemd 集成**：支持作为系统服务运行
+## Features
 
-## 快速开始
+- **IPVS Kernel-Level Load Balancing**: High-performance Layer-4 forwarding powered by Linux IPVS
+- **Declarative Reconcile**: Automatically compares desired state with actual IPVS rules and applies incremental changes
+- **Multiple Scheduling Algorithms**: Round Robin (rr), Weighted Round Robin (wrr), Least Connection (lc)
+- **TCP Health Checks**: Independent health check configuration per service, with option to disable
+- **Hot Config Reload**: File changes automatically trigger reconciliation without restart
 
-### 编译
+## Quick Start
+
+### Build
 
 ```bash
 make build
 ```
 
-### 配置
+Cross-compile for Linux:
 
-编辑配置文件 `/etc/ezlb/ezlb.yaml`：
+```bash
+make build-linux
+```
+
+### Configuration
+
+Create a config file `config.yaml`:
 
 ```yaml
 global:
@@ -45,39 +52,43 @@ services:
         weight: 3
 ```
 
-### 运行
+### Usage
 
 ```bash
-# 守护进程模式
-sudo ezlb -c /etc/ezlb/ezlb.yaml
+# Daemon mode
+sudo ezlb start -c config.yaml
 
-# 单次 Reconcile
-sudo ezlb once -c /etc/ezlb/ezlb.yaml
+# Single reconcile pass
+sudo ezlb once -c config.yaml
 
-# 查看版本
-ezlb version
+# Show version
+ezlb -v
 ```
 
-### systemd 服务
+## Testing
 
 ```bash
-sudo make install
-sudo cp deploy/ezlb.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now ezlb
+# Run unit tests (macOS/Linux)
+make test
+
+# Run all tests (Linux, requires root)
+make test-linux
+
+# Run e2e tests (Linux, requires root)
+make test-e2e
 ```
 
-## 项目结构
+## Project Structure
 
 ```
 ezlb/
-├── cmd/ezlb/           # 程序入口，CLI 命令
+├── cmd/ezlb/            # Entry point, CLI commands
 ├── pkg/
-│   ├── config/          # 配置管理（加载、校验、热加载）
-│   ├── lvs/             # IPVS 管理（操作封装、Reconcile）
-│   ├── healthcheck/     # 健康检查（TCP 探测）
-│   └── server/          # 服务编排（生命周期管理）
-├── examples/            # 示例配置
-├── deploy/              # 部署文件
+│   ├── config/           # Config management (loading, validation, hot reload)
+│   ├── lvs/              # IPVS management (operations, reconcile)
+│   ├── healthcheck/      # Health checking (TCP probes)
+│   └── server/           # Server orchestration (lifecycle management)
+├── tests/e2e/            # End-to-end tests
+├── examples/             # Example configurations
 └── Makefile
 ```
