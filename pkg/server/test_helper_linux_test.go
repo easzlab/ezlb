@@ -33,9 +33,15 @@ func newTestServer(t *testing.T, configPath string) *Server {
 		ipvsMu.Unlock()
 		t.Fatalf("failed to flush IPVS rules before test: %v", err)
 	}
-	// Register cleanup to flush after test and release the lock
+	// Register cleanup to flush after test and release the lock.
+	// Use a separate handle for cleanup because the test may close the manager
+	// via defer or shutdown() before t.Cleanup runs.
 	t.Cleanup(func() {
-		lvsMgr.Flush()
+		cleanupHandle, err := lvs.NewIPVSHandle("")
+		if err == nil {
+			cleanupHandle.Flush()
+			cleanupHandle.Close()
+		}
 		ipvsMu.Unlock()
 	})
 
@@ -63,9 +69,15 @@ func newTestLVSManager(t *testing.T) *lvs.Manager {
 		ipvsMu.Unlock()
 		t.Fatalf("failed to flush IPVS rules before test: %v", err)
 	}
-	// Register cleanup to flush after test and release the lock
+	// Register cleanup to flush after test and release the lock.
+	// Use a separate handle for cleanup because the test may call mgr.Close()
+	// via defer before t.Cleanup runs.
 	t.Cleanup(func() {
-		mgr.Flush()
+		cleanupHandle, err := lvs.NewIPVSHandle("")
+		if err == nil {
+			cleanupHandle.Flush()
+			cleanupHandle.Close()
+		}
 		ipvsMu.Unlock()
 	})
 	return mgr

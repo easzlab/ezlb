@@ -58,6 +58,9 @@ func TestManager_UpdateService_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetServices failed: %v", err)
 	}
+	if len(services) != 1 {
+		t.Fatalf("expected 1 service after update, got %d", len(services))
+	}
 	if services[0].SchedName != "wrr" {
 		t.Errorf("expected scheduler 'wrr', got %q", services[0].SchedName)
 	}

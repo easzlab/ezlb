@@ -30,17 +30,27 @@ func newTestManager(t *testing.T) *Manager {
 		ipvsMu.Unlock()
 		t.Fatalf("failed to flush IPVS rules before test: %v", err)
 	}
-	// Register cleanup to flush after test and release the lock
+	// Register cleanup to flush after test and release the lock.
+	// Use a separate handle for cleanup because the test may call mgr.Close()
+	// via defer before t.Cleanup runs (Go executes defers before Cleanup).
 	t.Cleanup(func() {
-		mgr.Flush()
+		cleanupHandle, err := NewIPVSHandle("")
+		if err == nil {
+			cleanupHandle.Flush()
+			cleanupHandle.Close()
+		}
 		ipvsMu.Unlock()
 	})
 	return mgr
 }
 
 func newTestService(address string, port uint16, protocol uint16, scheduler string) *Service {
+	ip := net.ParseIP(address)
+	if ipv4 := ip.To4(); ipv4 != nil {
+		ip = ipv4
+	}
 	return &Service{
-		Address:       net.ParseIP(address),
+		Address:       ip,
 		Protocol:      protocol,
 		Port:          port,
 		SchedName:     scheduler,
@@ -50,8 +60,12 @@ func newTestService(address string, port uint16, protocol uint16, scheduler stri
 }
 
 func newTestDestination(address string, port uint16, weight int) *Destination {
+	ip := net.ParseIP(address)
+	if ipv4 := ip.To4(); ipv4 != nil {
+		ip = ipv4
+	}
 	return &Destination{
-		Address:         net.ParseIP(address),
+		Address:         ip,
 		Port:            port,
 		Weight:          weight,
 		ConnectionFlags: ConnectionFlagMasq,
