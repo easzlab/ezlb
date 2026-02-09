@@ -18,6 +18,7 @@ jobs:
     - name: Install dependencies
       run: go mod tidy
     - name: Test
-      run: make test-linux
-    - name: Test E2E
-      run: make test-e2e
+      run: make test
+    # requires root privileges
+    #- name: Test E2E
+    #  run: make test-e2e
