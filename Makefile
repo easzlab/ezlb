@@ -26,22 +26,22 @@ help: ## show help
 build: ## build the binary
 	@echo "Building $(PROJECT_NAME) ..."
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=0 go build $(LDFLAGS) -o build/ezlb cmd/ezlb/main.go
+	CGO_ENABLED=0 go build -tags integration $(LDFLAGS) -o build/ezlb cmd/ezlb/main.go
 	@echo "✓ Build completed."
 
 .PHONY: build-dev
 build-dev: ## build the binary with debug info
 	@echo "Building $(PROJECT_NAME) for development..."
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=1 go build -race -o build/ezlb cmd/ezlb/main.go
+	CGO_ENABLED=1 go build -tags integration -race -o build/ezlb cmd/ezlb/main.go
 	@echo "✓ Development build completed."
 
 .PHONY: build-linux
 build-linux: ## build the binary for Linux
 	@echo "Building for Linux..."
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o build/ezlb-linux-amd64 cmd/ezlb/main.go
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o build/ezlb-linux-arm64 cmd/ezlb/main.go
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags integration $(LDFLAGS) -o build/ezlb-linux-amd64 cmd/ezlb/main.go
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -tags integration $(LDFLAGS) -o build/ezlb-linux-arm64 cmd/ezlb/main.go
 	@echo "✓ Linux build completed"
 
 .PHONY: test
@@ -63,7 +63,7 @@ test-linux: ## run unit tests with real IPVS (Linux only)
 .PHONY: test-e2e
 test-e2e: ## run end-to-end tests for Linux
 	@echo "Running e2e tests for linux..."
-	@go test -count=1 -v -p 1 ./tests/e2e/
+	@go test -count=1 -v -p 1 -tags integration ./tests/e2e/
 	@echo "✓ Tests completed"
 
 .PHONY: clean

@@ -16,7 +16,7 @@ import (
 var (
 	BuildTime   string
 	BuildCommit string
-	Version     = "0.1.3"
+	Version     = "0.1.4"
 	configPath  string
 	showVersion bool
 )
