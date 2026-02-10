@@ -2,7 +2,9 @@ package healthcheck
 
 import (
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"time"
 )
 
@@ -32,5 +34,41 @@ func (c *TCPChecker) Check(address string) error {
 		return fmt.Errorf("tcp health check failed for %s: %w", address, err)
 	}
 	conn.Close()
+	return nil
+}
+
+// HTTPChecker implements health checking via HTTP GET requests.
+type HTTPChecker struct {
+	client         *http.Client
+	path           string
+	expectedStatus int
+}
+
+// NewHTTPChecker creates a new HTTPChecker with the given parameters.
+func NewHTTPChecker(timeout time.Duration, path string, expectedStatus int) *HTTPChecker {
+	return &HTTPChecker{
+		client: &http.Client{
+			Timeout: timeout,
+		},
+		path:           path,
+		expectedStatus: expectedStatus,
+	}
+}
+
+// Check sends an HTTP GET request to the given address and verifies the response status code.
+// Returns nil if the status code matches the expected value, or an error otherwise.
+func (c *HTTPChecker) Check(address string) error {
+	url := fmt.Sprintf("http://%s%s", address, c.path)
+	resp, err := c.client.Get(url)
+	if err != nil {
+		return fmt.Errorf("http health check failed for %s: %w", address, err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+
+	if resp.StatusCode != c.expectedStatus {
+		return fmt.Errorf("http health check failed for %s: expected status %d, got %d",
+			address, c.expectedStatus, resp.StatusCode)
+	}
 	return nil
 }

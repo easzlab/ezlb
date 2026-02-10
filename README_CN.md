@@ -9,7 +9,7 @@
 - **IPVS 内核级负载均衡**：基于 Linux IPVS 实现高性能四层转发
 - **声明式 Reconcile**：自动对比期望状态与实际 IPVS 规则，增量同步变更
 - **多种调度算法**：支持轮询 (rr)、加权轮询 (wrr)、最少连接 (lc)、加权最少连接 (wlc)、目标地址哈希 (dh)、源地址哈希 (sh)
-- **TCP 健康检查**：每个服务独立配置检查参数，支持禁用
+- **TCP & HTTP 健康检查**：每个服务独立配置检查参数，支持 TCP 连接探测和 HTTP GET 探测（可配置路径和期望状态码）
 - **配置热加载**：修改配置文件自动触发 Reconcile，无需重启
 
 ## 快速开始
@@ -41,6 +41,7 @@ services:
     scheduler: wrr
     health_check:
       enabled: true
+      type: tcp              # 可选: tcp（默认）、http
       interval: 5s
       timeout: 3s
       fail_count: 3
@@ -50,6 +51,25 @@ services:
         weight: 5
       - address: 192.168.1.11:8080
         weight: 3
+
+  - name: api-service
+    listen: 10.0.0.1:443
+    protocol: tcp
+    scheduler: wlc
+    health_check:
+      enabled: true
+      type: http             # HTTP 健康检查
+      interval: 10s
+      timeout: 5s
+      fail_count: 5
+      rise_count: 3
+      http_path: /healthz            # 默认: /
+      http_expected_status: 200      # 默认: 200
+    backends:
+      - address: 192.168.2.10:8443
+        weight: 1
+      - address: 192.168.2.11:8443
+        weight: 1
 ```
 
 ### 运行
@@ -86,7 +106,7 @@ ezlb/
 ├── pkg/
 │   ├── config/           # 配置管理（加载、校验、热加载）
 │   ├── lvs/              # IPVS 管理（操作封装、Reconcile）
-│   ├── healthcheck/      # 健康检查（TCP 探测）
+│   ├── healthcheck/      # 健康检查（TCP & HTTP 探测）
 │   └── server/           # 服务编排（生命周期管理）
 ├── tests/e2e/            # 端到端测试
 ├── examples/             # 示例配置

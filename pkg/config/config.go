@@ -34,11 +34,14 @@ type ServiceConfig struct {
 
 // HealthCheckConfig defines per-service health check parameters.
 type HealthCheckConfig struct {
-	Enabled   *bool  `yaml:"enabled"    mapstructure:"enabled"`
-	Interval  string `yaml:"interval"   mapstructure:"interval"`
-	Timeout   string `yaml:"timeout"    mapstructure:"timeout"`
-	FailCount int    `yaml:"fail_count" mapstructure:"fail_count"`
-	RiseCount int    `yaml:"rise_count" mapstructure:"rise_count"`
+	Enabled            *bool  `yaml:"enabled"              mapstructure:"enabled"`
+	Type               string `yaml:"type"                 mapstructure:"type"`
+	Interval           string `yaml:"interval"             mapstructure:"interval"`
+	Timeout            string `yaml:"timeout"              mapstructure:"timeout"`
+	FailCount          int    `yaml:"fail_count"           mapstructure:"fail_count"`
+	RiseCount          int    `yaml:"rise_count"           mapstructure:"rise_count"`
+	HTTPPath           string `yaml:"http_path"            mapstructure:"http_path"`
+	HTTPExpectedStatus int    `yaml:"http_expected_status" mapstructure:"http_expected_status"`
 }
 
 // IsEnabled returns whether health check is enabled for this service.
@@ -74,6 +77,33 @@ func (h HealthCheckConfig) GetTimeout() time.Duration {
 		return 3 * time.Second
 	}
 	return duration
+}
+
+// GetType returns the health check type.
+// Defaults to "tcp" if not set.
+func (h HealthCheckConfig) GetType() string {
+	if h.Type == "" {
+		return "tcp"
+	}
+	return h.Type
+}
+
+// GetHTTPPath returns the HTTP health check request path.
+// Defaults to "/" if not set.
+func (h HealthCheckConfig) GetHTTPPath() string {
+	if h.HTTPPath == "" {
+		return "/"
+	}
+	return h.HTTPPath
+}
+
+// GetHTTPExpectedStatus returns the expected HTTP response status code.
+// Defaults to 200 if not set.
+func (h HealthCheckConfig) GetHTTPExpectedStatus() int {
+	if h.HTTPExpectedStatus <= 0 {
+		return 200
+	}
+	return h.HTTPExpectedStatus
 }
 
 // GetFailCount returns the consecutive failure threshold.
@@ -228,6 +258,23 @@ func Validate(cfg *Config) error {
 			if svc.HealthCheck.Timeout != "" {
 				if _, err := time.ParseDuration(svc.HealthCheck.Timeout); err != nil {
 					return fmt.Errorf("service %q: invalid health_check.timeout %q: %w", svc.Name, svc.HealthCheck.Timeout, err)
+				}
+			}
+
+			// Validate health check type
+			checkType := svc.HealthCheck.GetType()
+			if checkType != "tcp" && checkType != "http" {
+				return fmt.Errorf("service %q: unsupported health_check.type %q (supported: tcp, http)", svc.Name, checkType)
+			}
+
+			// Validate HTTP-specific parameters
+			if checkType == "http" {
+				if svc.HealthCheck.HTTPPath != "" && svc.HealthCheck.HTTPPath[0] != '/' {
+					return fmt.Errorf("service %q: health_check.http_path must start with '/'", svc.Name)
+				}
+				if svc.HealthCheck.HTTPExpectedStatus != 0 &&
+					(svc.HealthCheck.HTTPExpectedStatus < 100 || svc.HealthCheck.HTTPExpectedStatus > 599) {
+					return fmt.Errorf("service %q: health_check.http_expected_status must be between 100 and 599", svc.Name)
 				}
 			}
 		}

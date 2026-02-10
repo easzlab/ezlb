@@ -175,6 +175,88 @@ func TestValidate_HealthCheckTimeoutInvalid(t *testing.T) {
 	}
 }
 
+func TestValidate_HealthCheckTypeHTTP(t *testing.T) {
+	cfg := validConfig()
+	cfg.Services[0].HealthCheck.Type = "http"
+	cfg.Services[0].HealthCheck.HTTPPath = "/healthz"
+	cfg.Services[0].HealthCheck.HTTPExpectedStatus = 200
+	err := Validate(cfg)
+	if err != nil {
+		t.Fatalf("expected valid config with http health check, got: %v", err)
+	}
+}
+
+func TestValidate_HealthCheckTypeInvalid(t *testing.T) {
+	cfg := validConfig()
+	cfg.Services[0].HealthCheck.Type = "grpc"
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for unsupported health_check.type, got nil")
+	}
+}
+
+func TestValidate_HealthCheckHTTPPathInvalid(t *testing.T) {
+	cfg := validConfig()
+	cfg.Services[0].HealthCheck.Type = "http"
+	cfg.Services[0].HealthCheck.HTTPPath = "no-leading-slash"
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for http_path without leading slash, got nil")
+	}
+}
+
+func TestValidate_HealthCheckHTTPExpectedStatusInvalid(t *testing.T) {
+	cfg := validConfig()
+	cfg.Services[0].HealthCheck.Type = "http"
+	cfg.Services[0].HealthCheck.HTTPExpectedStatus = 999
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for http_expected_status out of range, got nil")
+	}
+}
+
+func TestGetType_Default(t *testing.T) {
+	hc := HealthCheckConfig{}
+	if hc.GetType() != "tcp" {
+		t.Errorf("expected default type 'tcp', got %q", hc.GetType())
+	}
+}
+
+func TestGetType_HTTP(t *testing.T) {
+	hc := HealthCheckConfig{Type: "http"}
+	if hc.GetType() != "http" {
+		t.Errorf("expected type 'http', got %q", hc.GetType())
+	}
+}
+
+func TestGetHTTPPath_Default(t *testing.T) {
+	hc := HealthCheckConfig{}
+	if hc.GetHTTPPath() != "/" {
+		t.Errorf("expected default http_path '/', got %q", hc.GetHTTPPath())
+	}
+}
+
+func TestGetHTTPPath_Custom(t *testing.T) {
+	hc := HealthCheckConfig{HTTPPath: "/healthz"}
+	if hc.GetHTTPPath() != "/healthz" {
+		t.Errorf("expected http_path '/healthz', got %q", hc.GetHTTPPath())
+	}
+}
+
+func TestGetHTTPExpectedStatus_Default(t *testing.T) {
+	hc := HealthCheckConfig{}
+	if hc.GetHTTPExpectedStatus() != 200 {
+		t.Errorf("expected default http_expected_status 200, got %d", hc.GetHTTPExpectedStatus())
+	}
+}
+
+func TestGetHTTPExpectedStatus_Custom(t *testing.T) {
+	hc := HealthCheckConfig{HTTPExpectedStatus: 204}
+	if hc.GetHTTPExpectedStatus() != 204 {
+		t.Errorf("expected http_expected_status 204, got %d", hc.GetHTTPExpectedStatus())
+	}
+}
+
 func TestValidate_HealthCheckDisabledSkipsIntervalValidation(t *testing.T) {
 	cfg := validConfig()
 	cfg.Services[0].HealthCheck.Enabled = boolPtr(false)

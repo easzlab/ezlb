@@ -92,8 +92,18 @@ func (m *Manager) UpdateTargets(ctx context.Context, services []config.ServiceCo
 			continue
 		}
 
-		// Service has health check enabled
-		checker := NewTCPChecker(svcCfg.HealthCheck.GetTimeout())
+		// Service has health check enabled — select checker by type
+		var checker Checker
+		switch svcCfg.HealthCheck.GetType() {
+		case "http":
+			checker = NewHTTPChecker(
+				svcCfg.HealthCheck.GetTimeout(),
+				svcCfg.HealthCheck.GetHTTPPath(),
+				svcCfg.HealthCheck.GetHTTPExpectedStatus(),
+			)
+		default:
+			checker = NewTCPChecker(svcCfg.HealthCheck.GetTimeout())
+		}
 		svcCheck := &serviceCheckConfig{
 			checker:   checker,
 			interval:  svcCfg.HealthCheck.GetInterval(),

@@ -26,10 +26,13 @@ services:
     scheduler: wlc
     health_check:
       enabled: true
+      type: http
       interval: 10s
-      timeout: 5s
-      fail_count: 5
-      rise_count: 3
+      timeout: 2s
+      fail_count: 3
+      rise_count: 2
+      http_path: /healthz
+      http_expected_status: 200
     backends:
       - address: 192.168.2.10:8443
         weight: 1
