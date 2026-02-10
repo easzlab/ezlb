@@ -105,6 +105,9 @@ var validSchedulers = map[string]bool{
 	"rr":  true,
 	"wrr": true,
 	"lc":  true,
+	"wlc": true,
+	"dh":  true,
+	"sh":  true,
 }
 
 // validProtocols is the set of supported protocols.
@@ -133,7 +136,7 @@ func NewManager(configPath string, logger *zap.Logger) (*Manager, error) {
 	manager := &Manager{
 		viper:      viperInstance,
 		configPath: configPath,
-		onChange:    make(chan struct{}, 1),
+		onChange:   make(chan struct{}, 1),
 		logger:     logger,
 	}
 
@@ -212,7 +215,7 @@ func Validate(cfg *Config) error {
 
 		// Validate scheduler
 		if !validSchedulers[svc.Scheduler] {
-			return fmt.Errorf("service %q: unsupported scheduler %q (supported: rr, wrr, lc)", svc.Name, svc.Scheduler)
+			return fmt.Errorf("service %q: unsupported scheduler %q (supported: rr, wrr, lc, wlc, dh, sh)", svc.Name, svc.Scheduler)
 		}
 
 		// Validate health check parameters

@@ -50,6 +50,13 @@ test: ## run unit tests (all platforms, using fake IPVS)
 	@go test -v ./...
 	@echo "✓ Tests completed"
 
+.PHONY: test-cov
+test-cov: ## run tests with coverage (all platforms, using fake IPVS)
+	@echo "Running tests with coverage..."
+	@go test -v -coverprofile=coverage.out ./...
+	@go tool cover -html=coverage.out -o coverage.html
+	@echo "✓ Coverage report generated: coverage.html"
+
 # test-linux runs tests with real IPVS handle, serially (-p 1) because IPVS is a global kernel resource.
 # Must be run as root on Linux.
 .PHONY: test-linux
@@ -70,6 +77,7 @@ test-e2e: ## run end-to-end tests for Linux
 clean: ## clean build artifacts
 	@echo "Cleaning build artifacts..."
 	@rm -rf $(BUILD_DIR)
+	@rm -f coverage.out coverage.html
 	@echo "✓ Clean completed"
 
 .PHONY: update

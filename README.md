@@ -8,7 +8,7 @@ A lightweight Layer-4 TCP load balancer based on Linux IPVS, using declarative r
 
 - **IPVS Kernel-Level Load Balancing**: High-performance Layer-4 forwarding powered by Linux IPVS
 - **Declarative Reconcile**: Automatically compares desired state with actual IPVS rules and applies incremental changes
-- **Multiple Scheduling Algorithms**: Round Robin (rr), Weighted Round Robin (wrr), Least Connection (lc)
+- **Multiple Scheduling Algorithms**: Round Robin (rr), Weighted Round Robin (wrr), Least Connection (lc), Weighted Least Connection (wlc), Destination Hashing (dh), Source Hashing (sh)
 - **TCP Health Checks**: Independent health check configuration per service, with option to disable
 - **Hot Config Reload**: File changes automatically trigger reconciliation without restart
 

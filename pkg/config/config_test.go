@@ -146,7 +146,7 @@ func TestValidate_SchedulerUnsupported(t *testing.T) {
 }
 
 func TestValidate_SchedulerValidValues(t *testing.T) {
-	for _, sched := range []string{"rr", "wrr", "lc"} {
+	for _, sched := range []string{"rr", "wrr", "lc", "wlc", "dh", "sh"} {
 		cfg := validConfig()
 		cfg.Services[0].Scheduler = sched
 		if err := Validate(cfg); err != nil {

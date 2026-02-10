@@ -23,7 +23,7 @@ services:
   - name: api-service
     listen: 10.0.0.1:443
     protocol: tcp
-    scheduler: lc
+    scheduler: wlc
     health_check:
       enabled: true
       interval: 10s
