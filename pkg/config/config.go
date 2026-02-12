@@ -143,6 +143,7 @@ var validSchedulers = map[string]bool{
 // validProtocols is the set of supported protocols.
 var validProtocols = map[string]bool{
 	"tcp": true,
+	"udp": true,
 }
 
 // Manager handles configuration loading, validation, and hot-reload.
@@ -227,12 +228,6 @@ func Validate(cfg *Config) error {
 			return fmt.Errorf("service %q: listen port must be a positive number", svc.Name)
 		}
 
-		listenKey := svc.Listen
-		if listenSet[listenKey] {
-			return fmt.Errorf("service %q: duplicate listen address %q", svc.Name, svc.Listen)
-		}
-		listenSet[listenKey] = true
-
 		// Validate protocol (default to tcp)
 		protocol := svc.Protocol
 		if protocol == "" {
@@ -240,8 +235,15 @@ func Validate(cfg *Config) error {
 			protocol = "tcp"
 		}
 		if !validProtocols[protocol] {
-			return fmt.Errorf("service %q: unsupported protocol %q (supported: tcp)", svc.Name, protocol)
+			return fmt.Errorf("service %q: unsupported protocol %q (supported: tcp, udp)", svc.Name, protocol)
 		}
+
+		// Deduplicate by listen address + protocol (IPVS allows same IP:Port for different protocols)
+		listenKey := svc.Listen + "/" + protocol
+		if listenSet[listenKey] {
+			return fmt.Errorf("service %q: duplicate listen address %q for protocol %q", svc.Name, svc.Listen, protocol)
+		}
+		listenSet[listenKey] = true
 
 		// Validate scheduler
 		if !validSchedulers[svc.Scheduler] {

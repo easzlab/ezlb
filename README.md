@@ -2,11 +2,11 @@
 
 English | [中文](README_CN.md)
 
-A lightweight Layer-4 TCP load balancer based on Linux IPVS, using declarative reconcile mode to dynamically manage IPVS services.
+A lightweight Layer-4 TCP/UDP load balancer based on Linux IPVS, using declarative reconcile mode to dynamically manage IPVS services.
 
 ## Features
 
-- **IPVS Kernel-Level Load Balancing**: High-performance Layer-4 forwarding powered by Linux IPVS
+- **IPVS Kernel-Level Load Balancing**: High-performance Layer-4 TCP/UDP forwarding powered by Linux IPVS
 - **Declarative Reconcile**: Automatically compares desired state with actual IPVS rules and applies incremental changes
 - **Multiple Scheduling Algorithms**: Round Robin (rr), Weighted Round Robin (wrr), Least Connection (lc), Weighted Least Connection (wlc), Destination Hashing (dh), Source Hashing (sh)
 - **TCP & HTTP Health Checks**: Independent health check configuration per service, supporting TCP connection probes and HTTP GET probes with configurable path and expected status code
@@ -69,6 +69,18 @@ services:
       - address: 192.168.2.10:8443
         weight: 1
       - address: 192.168.2.11:8443
+        weight: 1
+
+  - name: dns-service
+    listen: 10.0.0.2:53
+    protocol: udp            # UDP load balancing
+    scheduler: rr
+    health_check:
+      enabled: false
+    backends:
+      - address: 192.168.3.10:53
+        weight: 1
+      - address: 192.168.3.11:53
         weight: 1
 ```
 

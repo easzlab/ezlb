@@ -50,3 +50,15 @@ services:
         weight: 1
       - address: 192.168.3.11:9090
         weight: 1
+
+  - name: dns-service
+    listen: 10.0.0.3:53
+    protocol: udp
+    scheduler: rr
+    health_check:
+      enabled: false
+    backends:
+      - address: 192.168.4.10:53
+        weight: 1
+      - address: 192.168.4.11:53
+        weight: 1

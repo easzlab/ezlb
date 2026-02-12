@@ -107,7 +107,7 @@ func TestValidate_ListenAddressDuplicate(t *testing.T) {
 	svc1 := validServiceConfig()
 	svc2 := validServiceConfig()
 	svc2.Name = "test-svc-2"
-	// same listen address as svc1
+	// same listen address and protocol as svc1
 	cfg := &Config{Services: []ServiceConfig{svc1, svc2}}
 	err := Validate(cfg)
 	if err == nil {
@@ -127,12 +127,49 @@ func TestValidate_ProtocolEmptyDefaultsTCP(t *testing.T) {
 	}
 }
 
-func TestValidate_ProtocolUnsupported(t *testing.T) {
+func TestValidate_ProtocolUDP(t *testing.T) {
 	cfg := validConfig()
 	cfg.Services[0].Protocol = "udp"
 	err := Validate(cfg)
+	if err != nil {
+		t.Fatalf("expected valid config with udp protocol, got: %v", err)
+	}
+}
+
+func TestValidate_ProtocolUnsupported(t *testing.T) {
+	cfg := validConfig()
+	cfg.Services[0].Protocol = "sctp"
+	err := Validate(cfg)
 	if err == nil {
 		t.Fatal("expected error for unsupported protocol, got nil")
+	}
+}
+
+func TestValidate_SameListenDifferentProtocol(t *testing.T) {
+	svc1 := validServiceConfig()
+	svc1.Protocol = "tcp"
+	svc2 := validServiceConfig()
+	svc2.Name = "test-svc-udp"
+	svc2.Protocol = "udp"
+	// Same listen address, different protocol — should be allowed
+	cfg := &Config{Services: []ServiceConfig{svc1, svc2}}
+	err := Validate(cfg)
+	if err != nil {
+		t.Fatalf("expected same listen address with different protocols to be valid, got: %v", err)
+	}
+}
+
+func TestValidate_SameListenSameProtocolDuplicate(t *testing.T) {
+	svc1 := validServiceConfig()
+	svc1.Protocol = "udp"
+	svc2 := validServiceConfig()
+	svc2.Name = "test-svc-2"
+	svc2.Protocol = "udp"
+	// Same listen address, same protocol — should be rejected
+	cfg := &Config{Services: []ServiceConfig{svc1, svc2}}
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for duplicate listen address with same protocol, got nil")
 	}
 }
 

@@ -1,6 +1,7 @@
 package lvs
 
 import (
+	"syscall"
 	"testing"
 
 	"github.com/easzlab/ezlb/pkg/config"
@@ -485,6 +486,107 @@ func TestReconcile_BackendRecovery(t *testing.T) {
 	dests, _ = mgr.GetDestinations(services[0])
 	if len(dests) != 2 {
 		t.Fatalf("expected 2 destinations after recovery, got %d", len(dests))
+	}
+}
+
+// --- UDP protocol tests ---
+
+func TestReconcile_UDPService(t *testing.T) {
+	mgr, _, reconciler := newReconcilerTestEnv(t)
+	defer mgr.Close()
+
+	configs := []config.ServiceConfig{
+		{
+			Name:      "dns-svc",
+			Listen:    "10.0.0.1:53",
+			Protocol:  "udp",
+			Scheduler: "rr",
+			HealthCheck: config.HealthCheckConfig{
+				Enabled: boolPtr(false),
+			},
+			Backends: []config.BackendConfig{
+				makeBackend("192.168.1.1:53", 1),
+				makeBackend("192.168.1.2:53", 1),
+			},
+		},
+	}
+
+	if err := reconciler.Reconcile(configs); err != nil {
+		t.Fatalf("Reconcile failed: %v", err)
+	}
+
+	services, err := mgr.GetServices()
+	if err != nil {
+		t.Fatalf("GetServices failed: %v", err)
+	}
+	if len(services) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(services))
+	}
+	if services[0].Protocol != syscall.IPPROTO_UDP {
+		t.Errorf("expected protocol IPPROTO_UDP (%d), got %d", syscall.IPPROTO_UDP, services[0].Protocol)
+	}
+
+	dests, err := mgr.GetDestinations(services[0])
+	if err != nil {
+		t.Fatalf("GetDestinations failed: %v", err)
+	}
+	if len(dests) != 2 {
+		t.Fatalf("expected 2 destinations, got %d", len(dests))
+	}
+}
+
+func TestReconcile_TCPAndUDPSameAddress(t *testing.T) {
+	mgr, _, reconciler := newReconcilerTestEnv(t)
+	defer mgr.Close()
+
+	configs := []config.ServiceConfig{
+		{
+			Name:      "dns-tcp",
+			Listen:    "10.0.0.1:53",
+			Protocol:  "tcp",
+			Scheduler: "rr",
+			HealthCheck: config.HealthCheckConfig{
+				Enabled: boolPtr(false),
+			},
+			Backends: []config.BackendConfig{
+				makeBackend("192.168.1.1:53", 1),
+			},
+		},
+		{
+			Name:      "dns-udp",
+			Listen:    "10.0.0.1:53",
+			Protocol:  "udp",
+			Scheduler: "rr",
+			HealthCheck: config.HealthCheckConfig{
+				Enabled: boolPtr(false),
+			},
+			Backends: []config.BackendConfig{
+				makeBackend("192.168.1.2:53", 2),
+			},
+		},
+	}
+
+	if err := reconciler.Reconcile(configs); err != nil {
+		t.Fatalf("Reconcile failed: %v", err)
+	}
+
+	services, err := mgr.GetServices()
+	if err != nil {
+		t.Fatalf("GetServices failed: %v", err)
+	}
+	if len(services) != 2 {
+		t.Fatalf("expected 2 services (TCP + UDP), got %d", len(services))
+	}
+
+	// Verify each service has its own destinations
+	for _, svc := range services {
+		dests, err := mgr.GetDestinations(svc)
+		if err != nil {
+			t.Fatalf("GetDestinations failed: %v", err)
+		}
+		if len(dests) != 1 {
+			t.Errorf("expected 1 destination per service, got %d for protocol %d", len(dests), svc.Protocol)
+		}
 	}
 }
 

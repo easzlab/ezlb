@@ -2,11 +2,11 @@
 
 [English](README.md) | 中文
 
-基于 Linux IPVS 的四层 TCP 负载均衡工具，采用声明式 Reconcile 模式动态管理 IPVS 服务。
+基于 Linux IPVS 的四层 TCP/UDP 负载均衡工具，采用声明式 Reconcile 模式动态管理 IPVS 服务。
 
 ## 特性
 
-- **IPVS 内核级负载均衡**：基于 Linux IPVS 实现高性能四层转发
+- **IPVS 内核级负载均衡**：基于 Linux IPVS 实现高性能四层 TCP/UDP 转发
 - **声明式 Reconcile**：自动对比期望状态与实际 IPVS 规则，增量同步变更
 - **多种调度算法**：支持轮询 (rr)、加权轮询 (wrr)、最少连接 (lc)、加权最少连接 (wlc)、目标地址哈希 (dh)、源地址哈希 (sh)
 - **TCP & HTTP 健康检查**：每个服务独立配置检查参数，支持 TCP 连接探测和 HTTP GET 探测（可配置路径和期望状态码）
@@ -69,6 +69,18 @@ services:
       - address: 192.168.2.10:8443
         weight: 1
       - address: 192.168.2.11:8443
+        weight: 1
+
+  - name: dns-service
+    listen: 10.0.0.2:53
+    protocol: udp            # UDP 负载均衡
+    scheduler: rr
+    health_check:
+      enabled: false
+    backends:
+      - address: 192.168.3.10:53
+        weight: 1
+      - address: 192.168.3.11:53
         weight: 1
 ```
 
