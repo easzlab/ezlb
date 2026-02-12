@@ -10,6 +10,7 @@ A lightweight Layer-4 TCP/UDP load balancer based on Linux IPVS, using declarati
 - **Declarative Reconcile**: Automatically compares desired state with actual IPVS rules and applies incremental changes
 - **Multiple Scheduling Algorithms**: Round Robin (rr), Weighted Round Robin (wrr), Least Connection (lc), Weighted Least Connection (wlc), Destination Hashing (dh), Source Hashing (sh)
 - **TCP & HTTP Health Checks**: Independent health check configuration per service, supporting TCP connection probes and HTTP GET probes with configurable path and expected status code
+- **FullNAT / SNAT Support**: Optional per-service FullNAT mode via IPVS NAT + iptables SNAT/MASQUERADE, with automatic nftables compatibility on iptables-nft backends
 - **Hot Config Reload**: File changes automatically trigger reconciliation without restart
 
 ## Quick Start
@@ -75,6 +76,8 @@ services:
     listen: 10.0.0.2:53
     protocol: udp            # UDP load balancing
     scheduler: rr
+    full_nat: true           # Enable FullNAT (IPVS NAT + iptables SNAT)
+    snat_ip: 10.0.0.2        # Source IP for SNAT; omit for MASQUERADE
     health_check:
       enabled: false
     backends:
@@ -119,6 +122,7 @@ ezlb/
 │   ├── config/           # Config management (loading, validation, hot reload)
 │   ├── lvs/              # IPVS management (operations, reconcile)
 │   ├── healthcheck/      # Health checking (TCP & HTTP probes)
+│   ├── snat/             # SNAT/FullNAT management (iptables rules)
 │   └── server/           # Server orchestration (lifecycle management)
 ├── tests/e2e/            # End-to-end tests
 ├── examples/             # Example configurations

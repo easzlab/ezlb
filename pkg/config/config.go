@@ -28,6 +28,8 @@ type ServiceConfig struct {
 	Listen      string            `yaml:"listen"       mapstructure:"listen"`
 	Protocol    string            `yaml:"protocol"     mapstructure:"protocol"`
 	Scheduler   string            `yaml:"scheduler"    mapstructure:"scheduler"`
+	FullNAT     bool              `yaml:"full_nat"     mapstructure:"full_nat"`
+	SnatIP      string            `yaml:"snat_ip"      mapstructure:"snat_ip"`
 	HealthCheck HealthCheckConfig `yaml:"health_check" mapstructure:"health_check"`
 	Backends    []BackendConfig   `yaml:"backends"     mapstructure:"backends"`
 }
@@ -278,6 +280,16 @@ func Validate(cfg *Config) error {
 					(svc.HealthCheck.HTTPExpectedStatus < 100 || svc.HealthCheck.HTTPExpectedStatus > 599) {
 					return fmt.Errorf("service %q: health_check.http_expected_status must be between 100 and 599", svc.Name)
 				}
+			}
+		}
+
+		// Validate full_nat and snat_ip
+		if svc.SnatIP != "" {
+			if !svc.FullNAT {
+				return fmt.Errorf("service %q: snat_ip requires full_nat to be enabled", svc.Name)
+			}
+			if net.ParseIP(svc.SnatIP) == nil {
+				return fmt.Errorf("service %q: invalid snat_ip %q", svc.Name, svc.SnatIP)
 			}
 		}
 

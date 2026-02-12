@@ -294,6 +294,69 @@ func TestGetHTTPExpectedStatus_Custom(t *testing.T) {
 	}
 }
 
+// --- full_nat and snat_ip validation tests ---
+
+func TestValidate_FullNATWithSnatIP(t *testing.T) {
+	cfg := validConfig()
+	cfg.Services[0].FullNAT = true
+	cfg.Services[0].SnatIP = "10.0.0.1"
+	err := Validate(cfg)
+	if err != nil {
+		t.Fatalf("expected valid config with full_nat and snat_ip, got: %v", err)
+	}
+}
+
+func TestValidate_FullNATWithoutSnatIP(t *testing.T) {
+	cfg := validConfig()
+	cfg.Services[0].FullNAT = true
+	cfg.Services[0].SnatIP = ""
+	err := Validate(cfg)
+	if err != nil {
+		t.Fatalf("expected valid config with full_nat and no snat_ip (MASQUERADE), got: %v", err)
+	}
+}
+
+func TestValidate_SnatIPWithoutFullNAT(t *testing.T) {
+	cfg := validConfig()
+	cfg.Services[0].FullNAT = false
+	cfg.Services[0].SnatIP = "10.0.0.1"
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for snat_ip without full_nat enabled, got nil")
+	}
+}
+
+func TestValidate_SnatIPInvalid(t *testing.T) {
+	cfg := validConfig()
+	cfg.Services[0].FullNAT = true
+	cfg.Services[0].SnatIP = "not-an-ip"
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for invalid snat_ip, got nil")
+	}
+}
+
+func TestValidate_SnatIPEmpty(t *testing.T) {
+	cfg := validConfig()
+	cfg.Services[0].SnatIP = ""
+	err := Validate(cfg)
+	if err != nil {
+		t.Fatalf("expected valid config with empty snat_ip, got: %v", err)
+	}
+}
+
+func TestValidate_FullNATDefaultFalse(t *testing.T) {
+	cfg := validConfig()
+	// FullNAT defaults to false (zero value)
+	if cfg.Services[0].FullNAT {
+		t.Error("expected FullNAT to default to false")
+	}
+	err := Validate(cfg)
+	if err != nil {
+		t.Fatalf("expected valid config with default full_nat, got: %v", err)
+	}
+}
+
 func TestValidate_HealthCheckDisabledSkipsIntervalValidation(t *testing.T) {
 	cfg := validConfig()
 	cfg.Services[0].HealthCheck.Enabled = boolPtr(false)

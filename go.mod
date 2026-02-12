@@ -11,6 +11,7 @@ require (
 )
 
 require (
+	github.com/coreos/go-iptables v0.8.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect

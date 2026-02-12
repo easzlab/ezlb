@@ -7,6 +7,7 @@ import (
 	"github.com/easzlab/ezlb/pkg/config"
 	"github.com/easzlab/ezlb/pkg/healthcheck"
 	"github.com/easzlab/ezlb/pkg/lvs"
+	"github.com/easzlab/ezlb/pkg/snat"
 	"go.uber.org/zap"
 )
 
@@ -16,6 +17,7 @@ type Server struct {
 	lvsMgr     *lvs.Manager
 	reconciler *lvs.Reconciler
 	healthMgr  *healthcheck.Manager
+	snatMgr    snat.Manager
 	logger     *zap.Logger
 }
 
@@ -39,9 +41,16 @@ func newServerWithManager(configPath string, lvsMgr *lvs.Manager, logger *zap.Lo
 		return nil, fmt.Errorf("failed to initialize config manager: %w", err)
 	}
 
+	// Initialize SNAT manager
+	snatMgr, err := snat.NewManager(logger.Named("snat"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize SNAT manager: %w", err)
+	}
+
 	server := &Server{
 		configMgr: configMgr,
 		lvsMgr:    lvsMgr,
+		snatMgr:   snatMgr,
 		logger:    logger,
 	}
 
@@ -50,8 +59,8 @@ func newServerWithManager(configPath string, lvsMgr *lvs.Manager, logger *zap.Lo
 		server.triggerReconcile()
 	}, logger.Named("healthcheck"))
 
-	// Initialize reconciler with health checker
-	server.reconciler = lvs.NewReconciler(lvsMgr, server.healthMgr, logger.Named("reconciler"))
+	// Initialize reconciler with health checker and SNAT manager
+	server.reconciler = lvs.NewReconciler(lvsMgr, server.healthMgr, snatMgr, logger.Named("reconciler"))
 
 	return server, nil
 }
@@ -118,6 +127,9 @@ func (s *Server) triggerReconcile() {
 // shutdown gracefully stops all modules.
 func (s *Server) shutdown() {
 	s.healthMgr.Stop()
+	if err := s.snatMgr.Cleanup(); err != nil {
+		s.logger.Error("failed to cleanup SNAT rules", zap.Error(err))
+	}
 	s.lvsMgr.Close()
 	s.logger.Info("server stopped")
 }

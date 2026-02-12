@@ -5,6 +5,8 @@ After=network.target
 
 [Service]
 Type=simple
+ExecStartPre=/sbin/sysctl -w net.ipv4.ip_forward=1
+ExecStartPre=/sbin/sysctl -w net.ipv4.vs.conntrack=1
 ExecStartPre=/sbin/modprobe ip_vs
 ExecStartPre=/sbin/modprobe ip_vs_rr
 ExecStartPre=/sbin/modprobe ip_vs_wrr

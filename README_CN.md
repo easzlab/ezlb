@@ -10,6 +10,7 @@
 - **声明式 Reconcile**：自动对比期望状态与实际 IPVS 规则，增量同步变更
 - **多种调度算法**：支持轮询 (rr)、加权轮询 (wrr)、最少连接 (lc)、加权最少连接 (wlc)、目标地址哈希 (dh)、源地址哈希 (sh)
 - **TCP & HTTP 健康检查**：每个服务独立配置检查参数，支持 TCP 连接探测和 HTTP GET 探测（可配置路径和期望状态码）
+- **FullNAT / SNAT 支持**：按 service 粒度可选启用 FullNAT 模式（IPVS NAT + iptables SNAT/MASQUERADE），在 iptables-nft 后端系统上自动兼容 nftables
 - **配置热加载**：修改配置文件自动触发 Reconcile，无需重启
 
 ## 快速开始
@@ -75,6 +76,8 @@ services:
     listen: 10.0.0.2:53
     protocol: udp            # UDP 负载均衡
     scheduler: rr
+    full_nat: true           # 启用 FullNAT（IPVS NAT + iptables SNAT）
+    snat_ip: 10.0.0.2        # SNAT 源地址；不配置则使用 MASQUERADE
     health_check:
       enabled: false
     backends:
@@ -119,6 +122,7 @@ ezlb/
 │   ├── config/           # 配置管理（加载、校验、热加载）
 │   ├── lvs/              # IPVS 管理（操作封装、Reconcile）
 │   ├── healthcheck/      # 健康检查（TCP & HTTP 探测）
+│   ├── snat/             # SNAT/FullNAT 管理（iptables 规则）
 │   └── server/           # 服务编排（生命周期管理）
 ├── tests/e2e/            # 端到端测试
 ├── examples/             # 示例配置

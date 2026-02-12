@@ -10,6 +10,7 @@ import (
 
 	"github.com/easzlab/ezlb/pkg/config"
 	"github.com/easzlab/ezlb/pkg/lvs"
+	"github.com/easzlab/ezlb/pkg/snat"
 	"go.uber.org/zap"
 )
 
@@ -326,7 +327,8 @@ services:
 	healthChecker.SetHealthy("192.168.1.11:8080")
 
 	// Create reconciler with controllable health checker
-	reconciler := lvs.NewReconciler(lvsMgr, healthChecker, logger)
+	snatMgr, _ := snat.NewManager(logger.Named("snat"))
+	reconciler := lvs.NewReconciler(lvsMgr, healthChecker, snatMgr, logger)
 
 	cfg := configMgr.GetConfig()
 

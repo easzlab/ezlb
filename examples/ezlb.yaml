@@ -55,6 +55,8 @@ services:
     listen: 10.0.0.3:53
     protocol: udp
     scheduler: rr
+    full_nat: true           # Enable FullNAT (IPVS NAT + iptables SNAT)
+    snat_ip: 10.0.0.3        # Source IP for SNAT; omit for MASQUERADE
     health_check:
       enabled: false
     backends:

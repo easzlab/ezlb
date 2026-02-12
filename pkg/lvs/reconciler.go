@@ -3,9 +3,12 @@ package lvs
 import (
 	"errors"
 	"fmt"
+	"net"
+	"strconv"
 	"sync"
 
 	"github.com/easzlab/ezlb/pkg/config"
+	"github.com/easzlab/ezlb/pkg/snat"
 	"go.uber.org/zap"
 )
 
@@ -16,20 +19,22 @@ type HealthChecker interface {
 }
 
 // Reconciler implements declarative reconciliation between desired state (config + health)
-// and actual state (IPVS kernel rules).
+// and actual state (IPVS kernel rules + iptables SNAT rules).
 type Reconciler struct {
 	manager   *Manager
 	healthMgr HealthChecker
+	snatMgr   snat.Manager
 	logger    *zap.Logger
 	managed   map[ServiceKey]bool // tracks services managed by ezlb
 	mu        sync.Mutex
 }
 
 // NewReconciler creates a new Reconciler.
-func NewReconciler(manager *Manager, healthMgr HealthChecker, logger *zap.Logger) *Reconciler {
+func NewReconciler(manager *Manager, healthMgr HealthChecker, snatMgr snat.Manager, logger *zap.Logger) *Reconciler {
 	return &Reconciler{
 		manager:   manager,
 		healthMgr: healthMgr,
+		snatMgr:   snatMgr,
 		logger:    logger,
 		managed:   make(map[ServiceKey]bool),
 	}
@@ -115,6 +120,11 @@ func (r *Reconciler) Reconcile(desiredConfigs []config.ServiceConfig) error {
 		}
 	}
 
+	// Phase 5: Reconcile SNAT rules for services with full_nat enabled
+	if err := r.reconcileSNAT(desiredConfigs); err != nil {
+		reconcileErrors = append(reconcileErrors, fmt.Errorf("snat reconcile: %w", err))
+	}
+
 	if len(reconcileErrors) > 0 {
 		r.logger.Error("reconcile completed with errors", zap.Int("error_count", len(reconcileErrors)))
 		return errors.Join(reconcileErrors...)
@@ -122,6 +132,48 @@ func (r *Reconciler) Reconcile(desiredConfigs []config.ServiceConfig) error {
 
 	r.logger.Info("reconcile completed successfully")
 	return nil
+}
+
+// reconcileSNAT builds the desired SNAT rules from configs with full_nat enabled
+// and delegates to the SNAT manager for declarative reconciliation.
+func (r *Reconciler) reconcileSNAT(configs []config.ServiceConfig) error {
+	var desiredRules []snat.SNATRule
+
+	for _, svcCfg := range configs {
+		if !svcCfg.FullNAT {
+			continue
+		}
+
+		for _, backendCfg := range svcCfg.Backends {
+			// Only create SNAT rules for healthy backends
+			if svcCfg.HealthCheck.IsEnabled() && !r.healthMgr.IsHealthy(backendCfg.Address) {
+				continue
+			}
+
+			backendHost, backendPortStr, err := net.SplitHostPort(backendCfg.Address)
+			if err != nil {
+				return fmt.Errorf("service %q, backend %q: invalid address: %w", svcCfg.Name, backendCfg.Address, err)
+			}
+			backendPort, err := strconv.Atoi(backendPortStr)
+			if err != nil {
+				return fmt.Errorf("service %q, backend %q: invalid port: %w", svcCfg.Name, backendCfg.Address, err)
+			}
+
+			protocol := svcCfg.Protocol
+			if protocol == "" {
+				protocol = "tcp"
+			}
+
+			desiredRules = append(desiredRules, snat.SNATRule{
+				BackendIP:   backendHost,
+				BackendPort: uint16(backendPort),
+				Protocol:    protocol,
+				SnatIP:      svcCfg.SnatIP,
+			})
+		}
+	}
+
+	return r.snatMgr.Reconcile(desiredRules)
 }
 
 // buildDesiredState converts config services into the desired IPVS state,
