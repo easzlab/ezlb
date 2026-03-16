@@ -42,6 +42,10 @@ RUN set -eux; \
         curl \
         procps \
         net-tools \
+        ipvsadm \
+        iproute2 \
+        iptables \
+        kmod \
 	; \
 	rm -rf /var/lib/apt/lists/*
 

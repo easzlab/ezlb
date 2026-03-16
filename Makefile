@@ -44,6 +44,12 @@ build-linux: ## build the binary for Linux
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -tags integration $(LDFLAGS) -o build/ezlb-linux-arm64 cmd/ezlb/main.go
 	@echo "✓ Linux build completed"
 
+.PHONY: build-docker
+build-docker: ## build docker image: easzlab/ezlb
+	@echo "Building easzlab/ezlb:latest ..."
+	@docker build -t easzlab/ezlb .
+	@echo "✓ Build completed."
+
 .PHONY: test
 test: ## run unit tests (all platforms, using fake IPVS)
 	@echo "Running unit tests..."
@@ -72,6 +78,12 @@ test-e2e: ## run end-to-end tests for Linux
 	@echo "Running e2e tests for linux..."
 	@go test -count=1 -v -p 1 -tags integration ./tests/e2e/
 	@echo "✓ Tests completed"
+
+.PHONY: test-e2e-docker
+test-e2e-docker: ## run e2e tests inside a Docker container
+	@echo "Running containerized e2e tests..."
+	@bash tests/e2e/run-e2e-container.sh
+	@echo "✓ Containerized e2e tests completed"
 
 .PHONY: clean
 clean: ## clean build artifacts
