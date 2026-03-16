@@ -172,10 +172,13 @@ func (r *Reconciler) Cleanup() error {
 	return nil
 }
 
-// reconcileSNAT builds the desired SNAT rules from configs with full_nat enabled
-// and delegates to the SNAT manager for declarative reconciliation.
+// reconcileSNAT builds the desired SNAT and FORWARD rules from configs with
+// full_nat enabled and delegates to the SNAT manager for declarative reconciliation.
+// FORWARD rules are needed because IPVS NAT mode requires packets to traverse
+// the FORWARD chain, which may have a DROP policy (e.g. Docker environments).
 func (r *Reconciler) reconcileSNAT(configs []config.ServiceConfig) error {
-	var desiredRules []snat.SNATRule
+	var desiredSNATRules []snat.SNATRule
+	var desiredForwardRules []snat.ForwardRule
 
 	for _, svcCfg := range configs {
 		if !svcCfg.FullNAT {
@@ -183,7 +186,7 @@ func (r *Reconciler) reconcileSNAT(configs []config.ServiceConfig) error {
 		}
 
 		for _, backendCfg := range svcCfg.Backends {
-			// Only create SNAT rules for healthy backends
+			// Only create rules for healthy backends
 			if svcCfg.HealthCheck.IsEnabled() && !r.healthMgr.IsHealthy(backendCfg.Address) {
 				continue
 			}
@@ -202,16 +205,30 @@ func (r *Reconciler) reconcileSNAT(configs []config.ServiceConfig) error {
 				protocol = "tcp"
 			}
 
-			desiredRules = append(desiredRules, snat.SNATRule{
+			desiredSNATRules = append(desiredSNATRules, snat.SNATRule{
 				BackendIP:   backendHost,
 				BackendPort: uint16(backendPort),
 				Protocol:    protocol,
 				SnatIP:      svcCfg.SnatIP,
 			})
+
+			desiredForwardRules = append(desiredForwardRules, snat.ForwardRule{
+				BackendIP:   backendHost,
+				BackendPort: uint16(backendPort),
+				Protocol:    protocol,
+			})
 		}
 	}
 
-	return r.snatMgr.Reconcile(desiredRules)
+	if err := r.snatMgr.Reconcile(desiredSNATRules); err != nil {
+		return fmt.Errorf("snat rules: %w", err)
+	}
+
+	if err := r.snatMgr.ReconcileForward(desiredForwardRules); err != nil {
+		return fmt.Errorf("forward rules: %w", err)
+	}
+
+	return nil
 }
 
 // buildDesiredState converts config services into the desired IPVS state,

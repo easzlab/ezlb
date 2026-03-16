@@ -50,6 +50,20 @@ func TestReconcile_FullNATGeneratesSNATRules(t *testing.T) {
 	if len(managed) != 2 {
 		t.Fatalf("expected 2 SNAT rules, got %d", len(managed))
 	}
+
+	// Verify FORWARD rules were created via fake manager
+	managedForward := fakeSnatMgr.GetManagedForward()
+	if len(managedForward) != 2 {
+		t.Fatalf("expected 2 FORWARD rules, got %d", len(managedForward))
+	}
+	forwardKey1 := "192.168.1.1:53/udp"
+	if _, exists := managedForward[forwardKey1]; !exists {
+		t.Errorf("expected FORWARD rule %q to exist", forwardKey1)
+	}
+	forwardKey2 := "192.168.1.2:53/udp"
+	if _, exists := managedForward[forwardKey2]; !exists {
+		t.Errorf("expected FORWARD rule %q to exist", forwardKey2)
+	}
 }
 
 func TestReconcile_FullNATDisabledSkipsSNAT(t *testing.T) {
@@ -81,5 +95,11 @@ func TestReconcile_FullNATDisabledSkipsSNAT(t *testing.T) {
 	managed := fakeSnatMgr.GetManaged()
 	if len(managed) != 0 {
 		t.Fatalf("expected 0 SNAT rules when full_nat is disabled, got %d", len(managed))
+	}
+
+	// Verify no FORWARD rules were created
+	managedForward := fakeSnatMgr.GetManagedForward()
+	if len(managedForward) != 0 {
+		t.Fatalf("expected 0 FORWARD rules when full_nat is disabled, got %d", len(managedForward))
 	}
 }

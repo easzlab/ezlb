@@ -5,12 +5,14 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStartPre=/sbin/sysctl -w net.ipv4.ip_forward=1
-ExecStartPre=/sbin/sysctl -w net.ipv4.vs.conntrack=1
 ExecStartPre=/sbin/modprobe ip_vs
 ExecStartPre=/sbin/modprobe ip_vs_rr
 ExecStartPre=/sbin/modprobe ip_vs_wrr
 ExecStartPre=/sbin/modprobe ip_vs_lc
+ExecStartPre=/sbin/sysctl -w net.ipv4.ip_forward=1
+ExecStartPre=/sbin/sysctl -w net.ipv4.vs.conntrack=1
+ExecStartPre=/sbin/sysctl -w net.ipv4.conf.all.rp_filter=0
+ExecStartPre=/sbin/sysctl -w net.ipv4.conf.default.rp_filter=0
 ExecStart=/usr/local/bin/ezlb start -c /etc/ezlb/ezlb.yaml
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure

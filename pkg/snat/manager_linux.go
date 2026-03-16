@@ -12,16 +12,19 @@ import (
 )
 
 const (
-	natTable  = "nat"
-	snatChain = "EZLB-SNAT"
+	natTable     = "nat"
+	filterTable  = "filter"
+	snatChain    = "EZLB-SNAT"
+	forwardChain = "EZLB-FORWARD"
 )
 
-// linuxManager manages iptables SNAT rules on Linux using coreos/go-iptables.
+// linuxManager manages iptables SNAT and FORWARD rules on Linux using coreos/go-iptables.
 type linuxManager struct {
-	ipt     *iptables.IPTables
-	managed map[string]SNATRule
-	mu      sync.Mutex
-	logger  *zap.Logger
+	ipt            *iptables.IPTables
+	managed        map[string]SNATRule
+	managedForward map[string]ForwardRule
+	mu             sync.Mutex
+	logger         *zap.Logger
 }
 
 // NewManager creates a new SNAT Manager backed by real iptables operations.
@@ -32,13 +35,18 @@ func NewManager(logger *zap.Logger) (Manager, error) {
 	}
 
 	mgr := &linuxManager{
-		ipt:     ipt,
-		managed: make(map[string]SNATRule),
-		logger:  logger,
+		ipt:            ipt,
+		managed:        make(map[string]SNATRule),
+		managedForward: make(map[string]ForwardRule),
+		logger:         logger,
 	}
 
 	if err := mgr.ensureChain(); err != nil {
 		return nil, fmt.Errorf("failed to initialize SNAT chain: %w", err)
+	}
+
+	if err := mgr.ensureForwardChain(); err != nil {
+		return nil, fmt.Errorf("failed to initialize FORWARD chain: %w", err)
 	}
 
 	return mgr, nil
@@ -60,6 +68,42 @@ func (m *linuxManager) ensureChain() error {
 	jumpRule := []string{"-j", snatChain}
 	if err := m.ipt.AppendUnique(natTable, "POSTROUTING", jumpRule...); err != nil {
 		return fmt.Errorf("failed to add jump rule to POSTROUTING: %w", err)
+	}
+
+	return nil
+}
+
+// ensureForwardChain creates the EZLB-FORWARD chain in the filter table and adds
+// a jump rule from FORWARD, plus a conntrack ESTABLISHED,RELATED accept rule.
+func (m *linuxManager) ensureForwardChain() error {
+	exists, err := m.ipt.ChainExists(filterTable, forwardChain)
+	if err != nil {
+		return fmt.Errorf("failed to check chain existence: %w", err)
+	}
+	if !exists {
+		if err := m.ipt.NewChain(filterTable, forwardChain); err != nil {
+			return fmt.Errorf("failed to create chain %s: %w", forwardChain, err)
+		}
+		m.logger.Info("created iptables chain", zap.String("chain", forwardChain))
+	}
+
+	// Insert jump rule at the top of FORWARD chain so it takes priority.
+	// Use Exists + Insert for idempotency since go-iptables has no InsertUnique.
+	jumpRule := []string{"-j", forwardChain}
+	jumpExists, err := m.ipt.Exists(filterTable, "FORWARD", jumpRule...)
+	if err != nil {
+		return fmt.Errorf("failed to check jump rule in FORWARD: %w", err)
+	}
+	if !jumpExists {
+		if err := m.ipt.Insert(filterTable, "FORWARD", 1, jumpRule...); err != nil {
+			return fmt.Errorf("failed to add jump rule to FORWARD: %w", err)
+		}
+	}
+
+	// Add a conntrack rule to accept ESTABLISHED,RELATED packets (return traffic)
+	conntrackRule := []string{"-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"}
+	if err := m.ipt.AppendUnique(filterTable, forwardChain, conntrackRule...); err != nil {
+		return fmt.Errorf("failed to add conntrack rule to %s: %w", forwardChain, err)
 	}
 
 	return nil
@@ -112,11 +156,52 @@ func (m *linuxManager) Reconcile(desired []SNATRule) error {
 	return nil
 }
 
-// Cleanup removes all managed SNAT rules, the jump rule, and the custom chain.
+// ReconcileForward compares desired FORWARD rules with the currently managed set,
+// adding missing rules and removing stale ones. These rules allow IPVS NAT
+// traffic to pass through the FORWARD chain even when the default policy is DROP.
+func (m *linuxManager) ReconcileForward(desired []ForwardRule) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	desiredMap := make(map[string]ForwardRule, len(desired))
+	for _, rule := range desired {
+		desiredMap[rule.Key()] = rule
+	}
+
+	// Remove rules that are no longer desired
+	for key, rule := range m.managedForward {
+		if _, exists := desiredMap[key]; !exists {
+			if err := m.deleteForwardRule(rule); err != nil {
+				m.logger.Error("failed to delete FORWARD rule", zap.String("key", key), zap.Error(err))
+			} else {
+				delete(m.managedForward, key)
+				m.logger.Info("deleted FORWARD rule", zap.String("key", key))
+			}
+		}
+	}
+
+	// Add rules that are missing
+	for key, rule := range desiredMap {
+		if _, exists := m.managedForward[key]; exists {
+			continue
+		}
+		if err := m.addForwardRule(rule); err != nil {
+			m.logger.Error("failed to add FORWARD rule", zap.String("key", key), zap.Error(err))
+		} else {
+			m.managedForward[key] = rule
+			m.logger.Info("added FORWARD rule", zap.String("key", key))
+		}
+	}
+
+	return nil
+}
+
+// Cleanup removes all managed SNAT/FORWARD rules, jump rules, and custom chains.
 func (m *linuxManager) Cleanup() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// Clean up SNAT chain
 	if err := m.ipt.ClearChain(natTable, snatChain); err != nil {
 		m.logger.Error("failed to clear SNAT chain", zap.Error(err))
 	}
@@ -132,6 +217,24 @@ func (m *linuxManager) Cleanup() error {
 
 	m.managed = make(map[string]SNATRule)
 	m.logger.Info("cleaned up all SNAT rules")
+
+	// Clean up FORWARD chain
+	if err := m.ipt.ClearChain(filterTable, forwardChain); err != nil {
+		m.logger.Error("failed to clear FORWARD chain", zap.Error(err))
+	}
+
+	forwardJumpRule := []string{"-j", forwardChain}
+	if err := m.ipt.DeleteIfExists(filterTable, "FORWARD", forwardJumpRule...); err != nil {
+		m.logger.Error("failed to delete jump rule from FORWARD", zap.Error(err))
+	}
+
+	if err := m.ipt.DeleteChain(filterTable, forwardChain); err != nil {
+		m.logger.Error("failed to delete FORWARD chain", zap.Error(err))
+	}
+
+	m.managedForward = make(map[string]ForwardRule)
+	m.logger.Info("cleaned up all FORWARD rules")
+
 	return nil
 }
 
@@ -159,4 +262,25 @@ func (m *linuxManager) addRule(rule SNATRule) error {
 func (m *linuxManager) deleteRule(rule SNATRule) error {
 	spec := buildRuleSpec(rule)
 	return m.ipt.DeleteIfExists(natTable, snatChain, spec...)
+}
+
+// buildForwardRuleSpec constructs the iptables rule arguments for a FORWARD accept rule.
+func buildForwardRuleSpec(rule ForwardRule) []string {
+	portStr := strconv.Itoa(int(rule.BackendPort))
+	return []string{
+		"-d", rule.BackendIP,
+		"-p", rule.Protocol,
+		"--dport", portStr,
+		"-j", "ACCEPT",
+	}
+}
+
+func (m *linuxManager) addForwardRule(rule ForwardRule) error {
+	spec := buildForwardRuleSpec(rule)
+	return m.ipt.AppendUnique(filterTable, forwardChain, spec...)
+}
+
+func (m *linuxManager) deleteForwardRule(rule ForwardRule) error {
+	spec := buildForwardRuleSpec(rule)
+	return m.ipt.DeleteIfExists(filterTable, forwardChain, spec...)
 }
