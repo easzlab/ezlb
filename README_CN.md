@@ -34,6 +34,7 @@ make build-linux
 ```yaml
 global:
   log_level: info
+  cleanup_on_exit: true    # 退出时删除 ezlb 管理的 IPVS 服务和 EZLB-SNAT iptables 链（默认: true）
 
 services:
   - name: web-service

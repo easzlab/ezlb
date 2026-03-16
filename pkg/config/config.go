@@ -19,7 +19,17 @@ type Config struct {
 
 // GlobalConfig holds global settings.
 type GlobalConfig struct {
-	LogLevel string `yaml:"log_level" mapstructure:"log_level"`
+	LogLevel      string `yaml:"log_level"       mapstructure:"log_level"`
+	CleanupOnExit *bool  `yaml:"cleanup_on_exit" mapstructure:"cleanup_on_exit"`
+}
+
+// IsCleanupOnExit returns whether to clean up IPVS and iptables rules on exit.
+// Defaults to true if not explicitly set.
+func (g GlobalConfig) IsCleanupOnExit() bool {
+	if g.CleanupOnExit == nil {
+		return true
+	}
+	return *g.CleanupOnExit
 }
 
 // ServiceConfig defines a virtual service with its backends and health check settings.
@@ -165,6 +175,7 @@ func NewManager(configPath string, logger *zap.Logger) (*Manager, error) {
 
 	// Set defaults
 	viperInstance.SetDefault("global.log_level", "info")
+	viperInstance.SetDefault("global.cleanup_on_exit", true)
 
 	manager := &Manager{
 		viper:      viperInstance,

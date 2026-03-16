@@ -18,6 +18,7 @@ docker run -d \
   --cap-add NET_ADMIN \
   --cap-add NET_RAW \
   --restart unless-stopped \
+  -v /lib/modules:/lib/modules:ro \
   -v ./config.yaml:/app/config.yaml \
   easzlab/ezlb:latest \
   /app/ezlb start -c /app/config.yaml

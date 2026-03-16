@@ -436,7 +436,131 @@ services:
 	}
 }
 
-// --- Test 8: Version command ---
+// --- Test 8: Daemon mode with cleanup_on_exit: true (default) — IPVS rules removed after exit ---
+
+func TestE2E_DaemonMode_CleanupOnExit_True(t *testing.T) {
+	flushIPVS(t)
+	defer flushIPVS(t)
+
+	configYAML := `
+global:
+  log_level: info
+  cleanup_on_exit: true
+services:
+  - name: web-service
+    listen: 10.0.0.1:80
+    protocol: tcp
+    scheduler: rr
+    health_check:
+      enabled: false
+    backends:
+      - address: 192.168.1.10:8080
+        weight: 1
+`
+	dir := t.TempDir()
+	configPath := writeTestConfig(t, dir, configYAML)
+
+	cmd := runEzlbDaemon(t, configPath)
+
+	// Wait for initial reconcile
+	time.Sleep(500 * time.Millisecond)
+
+	// Verify IPVS service was created
+	services := getIPVSServices(t)
+	if len(services) < 1 {
+		t.Fatalf("expected at least 1 IPVS service after daemon start, got %d", len(services))
+	}
+	if findServiceByAddress(services, "10.0.0.1", 80) == nil {
+		t.Fatal("expected to find service 10.0.0.1:80 after daemon start")
+	}
+
+	// Send SIGTERM for graceful shutdown
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("failed to send SIGTERM: %v", err)
+	}
+
+	doneCh := make(chan error, 1)
+	go func() { doneCh <- cmd.Wait() }()
+	select {
+	case err := <-doneCh:
+		if err != nil {
+			t.Fatalf("daemon exited with error: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		cmd.Process.Kill()
+		t.Fatal("daemon did not exit within 10 seconds after SIGTERM")
+	}
+
+	// Verify IPVS service was cleaned up
+	services = getIPVSServices(t)
+	if findServiceByAddress(services, "10.0.0.1", 80) != nil {
+		t.Error("expected service 10.0.0.1:80 to be removed after daemon exit with cleanup_on_exit: true")
+	}
+}
+
+// --- Test 9: Daemon mode with cleanup_on_exit: false — IPVS rules preserved after exit ---
+
+func TestE2E_DaemonMode_CleanupOnExit_False(t *testing.T) {
+	flushIPVS(t)
+	defer flushIPVS(t)
+
+	configYAML := `
+global:
+  log_level: info
+  cleanup_on_exit: false
+services:
+  - name: web-service
+    listen: 10.0.0.1:80
+    protocol: tcp
+    scheduler: rr
+    health_check:
+      enabled: false
+    backends:
+      - address: 192.168.1.10:8080
+        weight: 1
+`
+	dir := t.TempDir()
+	configPath := writeTestConfig(t, dir, configYAML)
+
+	cmd := runEzlbDaemon(t, configPath)
+
+	// Wait for initial reconcile
+	time.Sleep(500 * time.Millisecond)
+
+	// Verify IPVS service was created
+	services := getIPVSServices(t)
+	if len(services) < 1 {
+		t.Fatalf("expected at least 1 IPVS service after daemon start, got %d", len(services))
+	}
+	if findServiceByAddress(services, "10.0.0.1", 80) == nil {
+		t.Fatal("expected to find service 10.0.0.1:80 after daemon start")
+	}
+
+	// Send SIGTERM for graceful shutdown
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("failed to send SIGTERM: %v", err)
+	}
+
+	doneCh := make(chan error, 1)
+	go func() { doneCh <- cmd.Wait() }()
+	select {
+	case err := <-doneCh:
+		if err != nil {
+			t.Fatalf("daemon exited with error: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		cmd.Process.Kill()
+		t.Fatal("daemon did not exit within 10 seconds after SIGTERM")
+	}
+
+	// Verify IPVS service is still present
+	services = getIPVSServices(t)
+	if findServiceByAddress(services, "10.0.0.1", 80) == nil {
+		t.Error("expected service 10.0.0.1:80 to be preserved after daemon exit with cleanup_on_exit: false")
+	}
+}
+
+// --- Test 10: Version command ---
 
 func TestE2E_Version(t *testing.T) {
 	var stdout bytes.Buffer

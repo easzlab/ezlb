@@ -1,4 +1,4 @@
-FROM golang:1.25 as builder
+FROM golang:1.25 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 ENV GOPROXY="https://goproxy.cn,direct"
@@ -21,7 +21,8 @@ RUN make build
 
 ## runtime image
 FROM debian:bookworm-slim
-ENV LANG C.UTF-8
+ENV LANG=C.UTF-8
+ENV TZ=Asia/Shanghai
 
 # runtime dependencies
 RUN set -eux; \
@@ -49,7 +50,6 @@ RUN set -eux; \
 	; \
 	rm -rf /var/lib/apt/lists/*
 
-ENV TZ=Asia/Shanghai
 WORKDIR /app
 
 COPY --from=builder /workspace/build/* /app/

@@ -134,6 +134,44 @@ func (r *Reconciler) Reconcile(desiredConfigs []config.ServiceConfig) error {
 	return nil
 }
 
+// Cleanup removes all IPVS services currently managed by this Reconciler.
+// It only deletes services tracked in the managed map, leaving other IPVS
+// rules untouched.
+func (r *Reconciler) Cleanup() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	actualServices, err := r.manager.GetServices()
+	if err != nil {
+		return fmt.Errorf("failed to get IPVS services for cleanup: %w", err)
+	}
+
+	actualMap := make(map[ServiceKey]*Service)
+	for _, svc := range actualServices {
+		actualMap[ServiceKeyFromIPVS(svc)] = svc
+	}
+
+	var errs []error
+	for key := range r.managed {
+		svc, exists := actualMap[key]
+		if !exists {
+			delete(r.managed, key)
+			continue
+		}
+		if err := r.manager.DeleteService(svc); err != nil {
+			errs = append(errs, fmt.Errorf("delete service %s: %w", key, err))
+		} else {
+			delete(r.managed, key)
+		}
+	}
+
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	r.logger.Info("cleaned up all managed IPVS services")
+	return nil
+}
+
 // reconcileSNAT builds the desired SNAT rules from configs with full_nat enabled
 // and delegates to the SNAT manager for declarative reconciliation.
 func (r *Reconciler) reconcileSNAT(configs []config.ServiceConfig) error {

@@ -34,6 +34,7 @@ Create a config file `config.yaml`:
 ```yaml
 global:
   log_level: info
+  cleanup_on_exit: true    # Remove managed IPVS services and EZLB-SNAT iptables chain on exit (default: true)
 
 services:
   - name: web-service

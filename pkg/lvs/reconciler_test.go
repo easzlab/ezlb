@@ -608,3 +608,136 @@ func TestReconcile_InvalidListenAddress(t *testing.T) {
 		t.Fatal("expected error for invalid listen address, got nil")
 	}
 }
+
+// --- Reconciler.Cleanup tests ---
+
+func TestReconciler_Cleanup_RemovesManagedServices(t *testing.T) {
+	mgr, healthMgr, reconciler := newReconcilerTestEnv(t)
+	defer mgr.Close()
+
+	healthMgr.status["192.168.1.1:8080"] = true
+	healthMgr.status["192.168.2.1:9090"] = true
+
+	configs := []config.ServiceConfig{
+		makeServiceConfig("svc1", "10.0.0.1:80", "rr", false,
+			makeBackend("192.168.1.1:8080", 1)),
+		makeServiceConfig("svc2", "10.0.0.2:443", "wrr", false,
+			makeBackend("192.168.2.1:9090", 1)),
+	}
+
+	if err := reconciler.Reconcile(configs); err != nil {
+		t.Fatalf("Reconcile failed: %v", err)
+	}
+
+	services, _ := mgr.GetServices()
+	if len(services) != 2 {
+		t.Fatalf("expected 2 services before cleanup, got %d", len(services))
+	}
+
+	if err := reconciler.Cleanup(); err != nil {
+		t.Fatalf("Cleanup failed: %v", err)
+	}
+
+	services, _ = mgr.GetServices()
+	if len(services) != 0 {
+		t.Fatalf("expected 0 services after cleanup, got %d", len(services))
+	}
+}
+
+func TestReconciler_Cleanup_PreservesUnmanagedServices(t *testing.T) {
+	mgr, healthMgr, reconciler := newReconcilerTestEnv(t)
+	defer mgr.Close()
+
+	// Manually create a service that ezlb does NOT manage
+	unmanaged := newTestService("10.99.0.1", 9999, 6, "rr")
+	if err := mgr.CreateService(unmanaged); err != nil {
+		t.Fatalf("failed to create unmanaged service: %v", err)
+	}
+
+	// Reconcile one managed service
+	healthMgr.status["192.168.1.1:8080"] = true
+	configs := []config.ServiceConfig{
+		makeServiceConfig("svc1", "10.0.0.1:80", "rr", false,
+			makeBackend("192.168.1.1:8080", 1)),
+	}
+	if err := reconciler.Reconcile(configs); err != nil {
+		t.Fatalf("Reconcile failed: %v", err)
+	}
+
+	services, _ := mgr.GetServices()
+	if len(services) != 2 {
+		t.Fatalf("expected 2 services before cleanup, got %d", len(services))
+	}
+
+	// Cleanup should only remove the managed service
+	if err := reconciler.Cleanup(); err != nil {
+		t.Fatalf("Cleanup failed: %v", err)
+	}
+
+	services, _ = mgr.GetServices()
+	if len(services) != 1 {
+		t.Fatalf("expected 1 service (unmanaged) after cleanup, got %d", len(services))
+	}
+	if !services[0].Address.Equal(unmanaged.Address) || services[0].Port != unmanaged.Port {
+		t.Errorf("expected unmanaged service 10.99.0.1:9999 to remain, got %s:%d",
+			services[0].Address, services[0].Port)
+	}
+}
+
+func TestReconciler_Cleanup_EmptyManaged(t *testing.T) {
+	mgr, _, reconciler := newReconcilerTestEnv(t)
+	defer mgr.Close()
+
+	// No reconcile performed — managed map is empty
+	if err := reconciler.Cleanup(); err != nil {
+		t.Fatalf("Cleanup on empty managed map should not fail, got: %v", err)
+	}
+
+	services, _ := mgr.GetServices()
+	if len(services) != 0 {
+		t.Fatalf("expected 0 services after cleanup of empty managed, got %d", len(services))
+	}
+}
+
+func TestReconciler_Cleanup_WithFullNATService(t *testing.T) {
+	mgr, _, reconciler := newReconcilerTestEnv(t)
+	defer mgr.Close()
+
+	// FullNAT service with health check disabled
+	configs := []config.ServiceConfig{
+		{
+			Name:      "dns-svc",
+			Listen:    "10.0.0.1:53",
+			Protocol:  "udp",
+			Scheduler: "rr",
+			FullNAT:   true,
+			SnatIP:    "10.0.0.1",
+			HealthCheck: config.HealthCheckConfig{
+				Enabled: boolPtr(false),
+			},
+			Backends: []config.BackendConfig{
+				makeBackend("192.168.1.1:53", 1),
+				makeBackend("192.168.1.2:53", 1),
+			},
+		},
+	}
+
+	if err := reconciler.Reconcile(configs); err != nil {
+		t.Fatalf("Reconcile failed: %v", err)
+	}
+
+	services, _ := mgr.GetServices()
+	if len(services) != 1 {
+		t.Fatalf("expected 1 IPVS service before cleanup, got %d", len(services))
+	}
+
+	// Cleanup should remove the IPVS service (SNAT cleanup is snatMgr's responsibility)
+	if err := reconciler.Cleanup(); err != nil {
+		t.Fatalf("Cleanup failed: %v", err)
+	}
+
+	services, _ = mgr.GetServices()
+	if len(services) != 0 {
+		t.Fatalf("expected 0 IPVS services after cleanup, got %d", len(services))
+	}
+}

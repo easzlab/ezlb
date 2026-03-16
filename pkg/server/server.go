@@ -102,13 +102,15 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 }
 
-// RunOnce performs a single reconcile pass and then shuts down.
-// This is used for manual one-shot reconciliation (e.g., via CLI or cron).
+// RunOnce performs a single reconcile pass and then exits.
+// IPVS rules and iptables rules are intentionally preserved after exit —
+// cleanup_on_exit does not apply to once mode, whose purpose is to apply
+// the desired state and leave it in place.
 func (s *Server) RunOnce() error {
 	cfg := s.configMgr.GetConfig()
 
 	err := s.reconciler.Reconcile(cfg.Services)
-	s.shutdown()
+	s.lvsMgr.Close()
 
 	if err != nil {
 		return fmt.Errorf("reconcile failed: %w", err)
@@ -127,8 +129,16 @@ func (s *Server) triggerReconcile() {
 // shutdown gracefully stops all modules.
 func (s *Server) shutdown() {
 	s.healthMgr.Stop()
-	if err := s.snatMgr.Cleanup(); err != nil {
-		s.logger.Error("failed to cleanup SNAT rules", zap.Error(err))
+	cfg := s.configMgr.GetConfig()
+	if cfg.Global.IsCleanupOnExit() {
+		if err := s.reconciler.Cleanup(); err != nil {
+			s.logger.Error("failed to cleanup IPVS rules", zap.Error(err))
+		}
+		if err := s.snatMgr.Cleanup(); err != nil {
+			s.logger.Error("failed to cleanup SNAT rules", zap.Error(err))
+		}
+	} else {
+		s.logger.Info("cleanup_on_exit is false, preserving IPVS and iptables rules")
 	}
 	s.lvsMgr.Close()
 	s.logger.Info("server stopped")

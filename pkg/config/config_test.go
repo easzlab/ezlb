@@ -654,3 +654,66 @@ func TestManager_OnChangeChannel(t *testing.T) {
 		t.Fatal("expected OnChange to return non-nil channel")
 	}
 }
+
+// --- GlobalConfig.IsCleanupOnExit tests ---
+
+func TestGlobalConfig_IsCleanupOnExit_DefaultTrue(t *testing.T) {
+	g := GlobalConfig{}
+	if !g.IsCleanupOnExit() {
+		t.Error("expected IsCleanupOnExit to return true when CleanupOnExit is nil")
+	}
+}
+
+func TestGlobalConfig_IsCleanupOnExit_ExplicitTrue(t *testing.T) {
+	g := GlobalConfig{CleanupOnExit: boolPtr(true)}
+	if !g.IsCleanupOnExit() {
+		t.Error("expected IsCleanupOnExit to return true when CleanupOnExit is explicitly true")
+	}
+}
+
+func TestGlobalConfig_IsCleanupOnExit_ExplicitFalse(t *testing.T) {
+	g := GlobalConfig{CleanupOnExit: boolPtr(false)}
+	if g.IsCleanupOnExit() {
+		t.Error("expected IsCleanupOnExit to return false when CleanupOnExit is explicitly false")
+	}
+}
+
+func TestManager_LoadYAML_CleanupOnExitDefault(t *testing.T) {
+	// cleanup_on_exit not set in YAML — should default to true
+	path := writeTestYAML(t, validYAML)
+	mgr, err := NewManager(path, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager failed: %v", err)
+	}
+	cfg := mgr.GetConfig()
+	if !cfg.Global.IsCleanupOnExit() {
+		t.Error("expected IsCleanupOnExit to return true when not set in config")
+	}
+}
+
+func TestManager_LoadYAML_CleanupOnExitFalse(t *testing.T) {
+	yaml := `
+global:
+  log_level: info
+  cleanup_on_exit: false
+services:
+  - name: web-service
+    listen: 10.0.0.1:80
+    protocol: tcp
+    scheduler: rr
+    health_check:
+      enabled: false
+    backends:
+      - address: 192.168.1.10:8080
+        weight: 1
+`
+	path := writeTestYAML(t, yaml)
+	mgr, err := NewManager(path, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager failed: %v", err)
+	}
+	cfg := mgr.GetConfig()
+	if cfg.Global.IsCleanupOnExit() {
+		t.Error("expected IsCleanupOnExit to return false when cleanup_on_exit: false in config")
+	}
+}
