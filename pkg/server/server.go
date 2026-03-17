@@ -8,6 +8,7 @@ import (
 	"github.com/easzlab/ezlb/pkg/healthcheck"
 	"github.com/easzlab/ezlb/pkg/lvs"
 	"github.com/easzlab/ezlb/pkg/snat"
+	"github.com/easzlab/ezlb/pkg/trafficlog"
 	"go.uber.org/zap"
 )
 
@@ -21,6 +22,7 @@ type Server struct {
 	logger        *zap.Logger
 	trafficLogger *zap.Logger
 	natLogger     *zap.Logger
+	collector     *trafficlog.Collector
 }
 
 // NewServer initializes all modules and returns a ready-to-run Server.
@@ -82,6 +84,32 @@ func (s *Server) Run(ctx context.Context) error {
 		s.logger.Error("initial reconcile failed", zap.Error(err))
 	}
 
+	// Start traffic collector if enabled (daemon mode only)
+	if cfg.Global.Log.Traffic.IsEnabled() {
+		lvsStats := trafficlog.NewLVSStatsAdapter(s.lvsMgr)
+
+		// Check if snat manager supports statistics via type assertion
+		var snatStats trafficlog.SNATStatsProvider
+		if sp, ok := s.snatMgr.(snat.StatsProvider); ok {
+			snatStats = &snatStatsAdapter{provider: sp}
+		}
+
+		s.collector = trafficlog.NewCollector(
+			lvsStats,
+			snatStats,
+			s.trafficLogger,
+			s.natLogger,
+			s.logger,
+			cfg.Services,
+			cfg.Global.Log.Traffic,
+		)
+		s.collector.Start()
+		s.logger.Info("traffic collector started",
+			zap.Duration("interval", cfg.Global.Log.Traffic.GetInterval()),
+			zap.Bool("include_snat", cfg.Global.Log.Traffic.IsIncludeSNAT()),
+		)
+	}
+
 	// Start config file watching
 	s.configMgr.WatchConfig()
 	s.logger.Info("config watcher started")
@@ -96,6 +124,10 @@ func (s *Server) Run(ctx context.Context) error {
 			s.healthMgr.UpdateTargets(ctx, newCfg.Services)
 			if err := s.reconciler.Reconcile(newCfg.Services); err != nil {
 				s.logger.Error("reconcile after config change failed", zap.Error(err))
+			}
+			// Update traffic collector config
+			if s.collector != nil {
+				s.collector.UpdateConfig(newCfg.Services, newCfg.Global.Log.Traffic)
 			}
 
 		case <-ctx.Done():
@@ -132,6 +164,12 @@ func (s *Server) triggerReconcile() {
 
 // shutdown gracefully stops all modules.
 func (s *Server) shutdown() {
+	// Stop traffic collector first
+	if s.collector != nil {
+		s.collector.Stop()
+		s.logger.Info("traffic collector stopped")
+	}
+
 	s.healthMgr.Stop()
 	cfg := s.configMgr.GetConfig()
 	if cfg.Global.IsCleanupOnExit() {
@@ -146,4 +184,24 @@ func (s *Server) shutdown() {
 	}
 	s.lvsMgr.Close()
 	s.logger.Info("server stopped")
+}
+
+// snatStatsAdapter adapts snat.StatsProvider to trafficlog.SNATStatsProvider.
+type snatStatsAdapter struct {
+	provider snat.StatsProvider
+}
+
+func (a *snatStatsAdapter) Stats() (map[string]trafficlog.SNATRuleStats, error) {
+	raw, err := a.provider.Stats()
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]trafficlog.SNATRuleStats, len(raw))
+	for k, v := range raw {
+		result[k] = trafficlog.SNATRuleStats{
+			Packets: v.Packets,
+			Bytes:   v.Bytes,
+		}
+	}
+	return result, nil
 }

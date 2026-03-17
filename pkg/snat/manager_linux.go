@@ -284,3 +284,69 @@ func (m *linuxManager) deleteForwardRule(rule ForwardRule) error {
 	spec := buildForwardRuleSpec(rule)
 	return m.ipt.DeleteIfExists(filterTable, forwardChain, spec...)
 }
+
+// Stats implements StatsProvider by parsing iptables -t nat -vnL EZLB-SNAT output.
+// It returns cumulative packet/byte counts keyed by rule key (backendIP:port/protocol).
+func (m *linuxManager) Stats() (map[string]SNATRuleStats, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	stats, err := m.ipt.Stats(natTable, snatChain)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get stats for chain %s: %w", snatChain, err)
+	}
+
+	result := make(map[string]SNATRuleStats)
+	for _, stat := range stats {
+		// go-iptables Stats() returns [][]string where each inner slice is:
+		// [pkts, bytes, target, prot, opt, in, out, source, destination, extra...]
+		if len(stat) < 9 {
+			continue
+		}
+
+		pkts, err := parseUint64(stat[0])
+		if err != nil {
+			continue
+		}
+		bytes, err := parseUint64(stat[1])
+		if err != nil {
+			continue
+		}
+
+		protocol := stat[3]
+		destination := stat[8]
+
+		// Extract dport from extra fields
+		dport := ""
+		for i := 9; i < len(stat); i++ {
+			if stat[i] == "dpt:" || (len(stat[i]) > 4 && stat[i][:4] == "dpt:") {
+				if stat[i] == "dpt:" && i+1 < len(stat) {
+					dport = stat[i+1]
+				} else if len(stat[i]) > 4 {
+					dport = stat[i][4:]
+				}
+				break
+			}
+		}
+
+		if dport == "" || destination == "" {
+			continue
+		}
+
+		// Build rule key matching SNATRule.Key() format: "backendIP:port/protocol"
+		ruleKey := fmt.Sprintf("%s:%s/%s", destination, dport, protocol)
+		result[ruleKey] = SNATRuleStats{
+			Packets: pkts,
+			Bytes:   bytes,
+		}
+	}
+
+	return result, nil
+}
+
+// parseUint64 parses a string to uint64, handling potential suffixes from iptables output.
+func parseUint64(s string) (uint64, error) {
+	var val uint64
+	_, err := fmt.Sscanf(s, "%d", &val)
+	return val, err
+}

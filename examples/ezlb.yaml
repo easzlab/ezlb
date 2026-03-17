@@ -1,16 +1,16 @@
 global:
   log:
     level: info              # Log level: debug, info, warn, error (default: info)
-    # home: ./logs           # Log directory (default: ./logs)
-    # max_size: 50           # Max size per log file in MB (default: 50)
-    # max_backups: 3         # Max number of old log files to retain (default: 3)
-    # max_age: 0             # Max days to retain old log files, 0=no limit (default: 0)
-    # compress: false        # Compress rotated log files (default: false)
+    home: ./logs             # Log directory (default: ./logs)
+    max_size: 50             # Max size per log file in MB (default: 50)
+    max_backups: 3           # Max number of old log files to retain (default: 3)
+    max_age: 0               # Max days to retain old log files, 0=no limit (default: 0)
+    compress: false          # Compress rotated log files (default: false)
     traffic:
       enabled: true          # Enable traffic logging (default: true)
       interval: 15s          # Traffic stats collection interval, min 5s (default: 15s)
       include_snat: true     # Include SNAT stats in traffic logs (default: true)
-  # cleanup_on_exit: true   # Remove managed IPVS services and EZLB-SNAT iptables chain on exit (default: true)
+  cleanup_on_exit: true      # Remove managed IPVS services and EZLB-SNAT iptables chain on exit (default: true)
 
 services:
   - name: web-service
