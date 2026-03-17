@@ -17,8 +17,8 @@ import (
 // controllableHealthChecker is a mock HealthChecker that allows tests to
 // control the health status of individual backends.
 type controllableHealthChecker struct {
-	mu     sync.RWMutex
 	status map[string]bool
+	mu     sync.RWMutex
 }
 
 func newControllableHealthChecker() *controllableHealthChecker {

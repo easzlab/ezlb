@@ -7,9 +7,11 @@ global:
     max_age: 0               # Max days to retain old log files, 0=no limit (default: 0)
     compress: false          # Compress rotated log files (default: false)
     traffic:
-      enabled: true          # Enable traffic logging (default: true)
+      enabled: true          # Enable traffic collector (default: true)
       interval: 15s          # Traffic stats collection interval, min 5s (default: 15s)
       include_snat: true     # Include SNAT stats in traffic logs (default: true)
+      # Note: Traffic logging is disabled by default per service.
+      # Set traffic_log: true on each service to enable.
   cleanup_on_exit: true      # Remove managed IPVS services and EZLB-SNAT iptables chain on exit (default: true)
 
 services:
@@ -68,7 +70,7 @@ services:
     scheduler: rr
     full_nat: true           # Enable FullNAT (IPVS NAT + iptables SNAT)
     snat_ip: 10.0.0.3        # Source IP for SNAT; omit for MASQUERADE
-    # traffic_log_level: none  # Per-service traffic log level override: debug/info/warn/error/none (default: inherit global)
+    traffic_log: true          # Per-service traffic log: true to enable raw stats logging (default: disabled)
     health_check:
       enabled: false
     backends:

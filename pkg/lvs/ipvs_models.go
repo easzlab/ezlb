@@ -7,26 +7,26 @@ import (
 
 // Service defines an IPVS service in its entirety.
 type Service struct {
-	Address       net.IP
-	Protocol      uint16
-	Port          uint16
-	FWMark        uint32
 	SchedName     string
+	PEName        string
+	Address       net.IP
+	Stats         SvcStats
+	FWMark        uint32
 	Flags         uint32
 	Timeout       uint32
 	Netmask       uint32
+	Protocol      uint16
+	Port          uint16
 	AddressFamily uint16
-	PEName        string
-	Stats         SvcStats
 }
 
 // SvcStats defines IPVS service statistics.
 type SvcStats struct {
+	BytesIn     uint64
+	BytesOut    uint64
 	Connections uint32
 	PacketsIn   uint32
 	PacketsOut  uint32
-	BytesIn     uint64
-	BytesOut    uint64
 	CPS         uint32
 	BPSOut      uint32
 	PPSIn       uint32
@@ -37,15 +37,15 @@ type SvcStats struct {
 // Destination defines an IPVS destination (real server) in its entirety.
 type Destination struct {
 	Address             net.IP
-	Port                uint16
+	Stats               DstStats
 	Weight              int
-	ConnectionFlags     uint32
-	AddressFamily       uint16
-	UpperThreshold      uint32
-	LowerThreshold      uint32
 	ActiveConnections   int
 	InactiveConnections int
-	Stats               DstStats
+	ConnectionFlags     uint32
+	UpperThreshold      uint32
+	LowerThreshold      uint32
+	Port                uint16
+	AddressFamily       uint16
 }
 
 // DstStats defines IPVS destination (real server) statistics.

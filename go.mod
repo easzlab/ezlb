@@ -3,15 +3,16 @@ module github.com/easzlab/ezlb
 go 1.25.6
 
 require (
+	github.com/coreos/go-iptables v0.8.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/moby/ipvs v1.1.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	go.uber.org/zap v1.27.1
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
 
 require (
-	github.com/coreos/go-iptables v0.8.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
@@ -28,5 +29,4 @@ require (
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/text v0.34.0 // indirect
 	gopkg.in/check.v1 v1.0.0-20190902080502-41f04d3bba15 // indirect
-	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 )

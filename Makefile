@@ -98,3 +98,12 @@ update: ## update dependencies
 	@go get -u ./...
 	@go mod tidy
 	@echo "✓ Dependencies updated"
+
+.PHONY: align
+align: ## fieldalignment for structs
+	@echo "Align structs' fields..."
+	@echo "Installing fieldalignment..."
+	@go install golang.org/x/tools/go/analysis/passes/fieldalignment/cmd/fieldalignment@latest
+	@echo "Running fieldalignment..."
+	@fieldalignment -fix ./...
+	@echo "✓ Dependencies updated"

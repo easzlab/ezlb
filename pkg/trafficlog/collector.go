@@ -9,22 +9,21 @@ import (
 	"go.uber.org/zap"
 )
 
-// Collector periodically collects IPVS and optional SNAT statistics,
-// computes deltas from the previous snapshot, and writes traffic logs.
+// Collector periodically collects IPVS and optional SNAT statistics
+// and writes raw cumulative data as debug-level traffic logs.
+// Traffic logging is disabled by default per service; only services with
+// traffic_log explicitly set to true will be logged.
 type Collector struct {
+	trafficCfg    config.TrafficLogConfig
 	lvsStats      LVSStatsProvider
-	snatStats     SNATStatsProvider // may be nil
+	snatStats     SNATStatsProvider
 	trafficLogger *zap.Logger
 	natLogger     *zap.Logger
 	systemLogger  *zap.Logger
-
-	mu         sync.RWMutex
-	services   []config.ServiceConfig
-	trafficCfg config.TrafficLogConfig
-
-	prevSnapshot *TrafficSnapshot
-	stopCh       chan struct{}
-	stopped      chan struct{}
+	stopCh        chan struct{}
+	stopped       chan struct{}
+	services      []config.ServiceConfig
+	mu            sync.RWMutex
 }
 
 // NewCollector creates a new traffic statistics collector.
@@ -106,18 +105,14 @@ func (c *Collector) run() {
 	}
 }
 
-// collect performs a single collection cycle: gather stats, compute deltas, write logs.
+// collect performs a single collection cycle: gather stats and write raw data logs.
 func (c *Collector) collect() {
 	snapshot := c.gatherSnapshot()
 	if snapshot == nil {
 		return
 	}
 
-	if c.prevSnapshot != nil {
-		c.computeAndLogDeltas(snapshot)
-	}
-	// First sample or subsequent: update baseline
-	c.prevSnapshot = snapshot
+	c.logRawStats(snapshot)
 }
 
 // gatherSnapshot collects current statistics from all providers.
@@ -161,147 +156,74 @@ func (c *Collector) gatherSnapshot() *TrafficSnapshot {
 	return snapshot
 }
 
-// computeAndLogDeltas calculates deltas between current and previous snapshots and writes logs.
-func (c *Collector) computeAndLogDeltas(current *TrafficSnapshot) {
+// logRawStats writes raw cumulative statistics as debug-level log entries.
+// Only services with traffic_log explicitly set to true are logged.
+func (c *Collector) logRawStats(snapshot *TrafficSnapshot) {
 	c.mu.RLock()
 	services := c.services
-	interval := c.trafficCfg.GetInterval()
 	c.mu.RUnlock()
 
 	// Build service key -> config lookup
 	svcConfigMap := buildServiceConfigMap(services)
 
-	// Log service-level deltas
-	for key, cur := range current.Services {
-		prev, exists := c.prevSnapshot.Services[key]
-		if !exists {
-			// New service, establish baseline
+	// Log service-level raw stats
+	for key, stats := range snapshot.Services {
+		svcCfg, ok := svcConfigMap[key]
+		if !ok {
+			// Service config not found (may have been removed), skip
 			continue
 		}
 
-		connDelta := safeDelta64(cur.Connections, prev.Connections)
-		bytesInDelta := safeDelta64(cur.InBytes, prev.InBytes)
-		bytesOutDelta := safeDelta64(cur.OutBytes, prev.OutBytes)
-		pktsInDelta := safeDelta64(cur.InPkts, prev.InPkts)
-		pktsOutDelta := safeDelta64(cur.OutPkts, prev.OutPkts)
-
-		// Skip if no change
-		if connDelta == 0 && bytesInDelta == 0 && bytesOutDelta == 0 {
+		// Default behavior: traffic_log is nil or false means disabled
+		if !isTrafficLogEnabled(svcCfg.TrafficLog) {
 			continue
 		}
 
-		// Check per-service traffic log level
-		if svcCfg, ok := svcConfigMap[key]; ok {
-			if svcCfg.TrafficLogLevel == "none" {
-				continue
-			}
-			fields := append(logutil.ServiceFields(svcCfg),
-				zap.String("source", "ipvs"),
-				zap.String("type", "service"),
-				zap.Duration("interval", interval),
-				zap.Uint64("connections_delta", connDelta),
-				zap.Uint64("bytes_in_delta", bytesInDelta),
-				zap.Uint64("bytes_out_delta", bytesOutDelta),
-				zap.Uint64("packets_in_delta", pktsInDelta),
-				zap.Uint64("packets_out_delta", pktsOutDelta),
-			)
-			logAtLevel(c.trafficLogger, svcCfg.TrafficLogLevel, "traffic stats", fields)
-		} else {
-			// Service config not found (may have been removed), log at default level
-			c.trafficLogger.Info("traffic stats",
-				zap.String("source", "ipvs"),
-				zap.String("type", "service"),
-				zap.String("service_key", key),
-				zap.Duration("interval", interval),
-				zap.Uint64("connections_delta", connDelta),
-				zap.Uint64("bytes_in_delta", bytesInDelta),
-				zap.Uint64("bytes_out_delta", bytesOutDelta),
-				zap.Uint64("packets_in_delta", pktsInDelta),
-				zap.Uint64("packets_out_delta", pktsOutDelta),
-			)
-		}
+		fields := append(logutil.ServiceFields(svcCfg),
+			zap.String("source", "ipvs"),
+			zap.String("type", "service"),
+			zap.Uint64("connections", stats.Connections),
+			zap.Uint64("bytes_in", stats.InBytes),
+			zap.Uint64("bytes_out", stats.OutBytes),
+			zap.Uint64("packets_in", stats.InPkts),
+			zap.Uint64("packets_out", stats.OutPkts),
+		)
+		c.trafficLogger.Debug("traffic raw stats", fields...)
 	}
 
-	// Log backend-level deltas
-	for key, cur := range current.Backends {
-		prev, exists := c.prevSnapshot.Backends[key]
-		if !exists {
+	// Log backend-level raw stats
+	for key, stats := range snapshot.Backends {
+		svcCfg, ok := svcConfigMap[stats.ServiceKey]
+		if !ok {
 			continue
 		}
 
-		connDelta := safeDelta64(cur.Connections, prev.Connections)
-		bytesInDelta := safeDelta64(cur.InBytes, prev.InBytes)
-		bytesOutDelta := safeDelta64(cur.OutBytes, prev.OutBytes)
-		pktsInDelta := safeDelta64(cur.InPkts, prev.InPkts)
-		pktsOutDelta := safeDelta64(cur.OutPkts, prev.OutPkts)
-
-		if connDelta == 0 && bytesInDelta == 0 && bytesOutDelta == 0 {
+		if !isTrafficLogEnabled(svcCfg.TrafficLog) {
 			continue
 		}
 
-		// Check per-service traffic log level
-		if svcCfg, ok := svcConfigMap[cur.ServiceKey]; ok {
-			if svcCfg.TrafficLogLevel == "none" {
-				continue
-			}
-			fields := append(logutil.ServiceFields(svcCfg),
-				zap.String("source", "ipvs"),
-				zap.String("type", "backend"),
-				zap.String("backend_key", key),
-				zap.Duration("interval", interval),
-				zap.Uint64("connections_delta", connDelta),
-				zap.Uint64("bytes_in_delta", bytesInDelta),
-				zap.Uint64("bytes_out_delta", bytesOutDelta),
-				zap.Uint64("packets_in_delta", pktsInDelta),
-				zap.Uint64("packets_out_delta", pktsOutDelta),
-			)
-			logAtLevel(c.trafficLogger, svcCfg.TrafficLogLevel, "traffic stats", fields)
-		} else {
-			c.trafficLogger.Info("traffic stats",
-				zap.String("source", "ipvs"),
-				zap.String("type", "backend"),
-				zap.String("backend_key", key),
-				zap.Duration("interval", interval),
-				zap.Uint64("connections_delta", connDelta),
-				zap.Uint64("bytes_in_delta", bytesInDelta),
-				zap.Uint64("bytes_out_delta", bytesOutDelta),
-				zap.Uint64("packets_in_delta", pktsInDelta),
-				zap.Uint64("packets_out_delta", pktsOutDelta),
-			)
-		}
+		fields := append(logutil.ServiceFields(svcCfg),
+			zap.String("source", "ipvs"),
+			zap.String("type", "backend"),
+			zap.String("backend_key", key),
+			zap.Uint64("connections", stats.Connections),
+			zap.Uint64("bytes_in", stats.InBytes),
+			zap.Uint64("bytes_out", stats.OutBytes),
+			zap.Uint64("packets_in", stats.InPkts),
+			zap.Uint64("packets_out", stats.OutPkts),
+		)
+		c.trafficLogger.Debug("traffic raw stats", fields...)
 	}
 
-	// Log SNAT deltas
-	for key, cur := range current.SNAT {
-		prev, exists := c.prevSnapshot.SNAT[key]
-		if !exists {
-			continue
-		}
-
-		pktsDelta := safeDelta64(cur.Packets, prev.Packets)
-		bytesDelta := safeDelta64(cur.Bytes, prev.Bytes)
-
-		if pktsDelta == 0 && bytesDelta == 0 {
-			continue
-		}
-
-		c.natLogger.Info("snat stats",
+	// Log SNAT raw stats
+	for key, stats := range snapshot.SNAT {
+		c.natLogger.Debug("snat raw stats",
 			zap.String("source", "snat"),
 			zap.String("rule_key", key),
-			zap.Duration("interval", interval),
-			zap.Uint64("packets_delta", pktsDelta),
-			zap.Uint64("bytes_delta", bytesDelta),
+			zap.Uint64("packets", stats.Packets),
+			zap.Uint64("bytes", stats.Bytes),
 		)
 	}
-}
-
-// safeDelta64 computes current - previous for uint64 values.
-// If current < previous (counter reset/wrap), returns 0 (baseline reset).
-func safeDelta64(current, previous uint64) uint64 {
-	if current < previous {
-		return 0
-	}
-	return current - previous
 }
 
 // buildServiceConfigMap builds a lookup map from service key (listen/protocol format)
@@ -316,17 +238,8 @@ func buildServiceConfigMap(services []config.ServiceConfig) map[string]config.Se
 	return result
 }
 
-// logAtLevel logs a message at the specified level. If level is empty, defaults to info.
-func logAtLevel(logger *zap.Logger, level string, msg string, fields []zap.Field) {
-	switch level {
-	case "debug":
-		logger.Debug(msg, fields...)
-	case "warn":
-		logger.Warn(msg, fields...)
-	case "error":
-		logger.Error(msg, fields...)
-	default:
-		// "info" or empty (inherit global)
-		logger.Info(msg, fields...)
-	}
+// isTrafficLogEnabled returns true if the per-service traffic log flag
+// is explicitly set to true. A nil pointer (default) or false means disabled.
+func isTrafficLogEnabled(trafficLog *bool) bool {
+	return trafficLog != nil && *trafficLog
 }

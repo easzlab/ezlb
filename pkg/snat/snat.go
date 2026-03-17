@@ -4,10 +4,10 @@ import "fmt"
 
 // SNATRule describes a single SNAT/MASQUERADE rule for a backend destination.
 type SNATRule struct {
-	BackendIP   string // destination real server IP
-	BackendPort uint16 // destination port
-	Protocol    string // "tcp" or "udp"
-	SnatIP      string // SNAT source IP; empty means use MASQUERADE
+	BackendIP   string
+	Protocol    string
+	SnatIP      string
+	BackendPort uint16
 }
 
 // Key returns a unique string identifier for this rule.
@@ -19,9 +19,9 @@ func (r SNATRule) Key() string {
 // This is needed because IPVS NAT mode requires packets to traverse the FORWARD
 // chain, which may have a DROP policy (e.g. when Docker is installed).
 type ForwardRule struct {
-	BackendIP   string // destination real server IP
-	BackendPort uint16 // destination port
-	Protocol    string // "tcp" or "udp"
+	BackendIP   string
+	Protocol    string
+	BackendPort uint16
 }
 
 // Key returns a unique string identifier for this forward rule.

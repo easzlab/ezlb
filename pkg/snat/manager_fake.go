@@ -13,8 +13,8 @@ import (
 type FakeManager struct {
 	managed        map[string]SNATRule
 	managedForward map[string]ForwardRule
-	mu             sync.Mutex
 	logger         *zap.Logger
+	mu             sync.Mutex
 }
 
 // NewManager creates a fake in-memory SNAT Manager for non-Linux systems.

@@ -810,30 +810,27 @@ func TestValidate_LogLevelInvalid(t *testing.T) {
 	}
 }
 
-func TestValidate_TrafficLogLevelInvalid(t *testing.T) {
+func TestValidate_TrafficLogTrue(t *testing.T) {
 	cfg := validConfig()
-	cfg.Services[0].TrafficLogLevel = "trace"
-	err := Validate(cfg)
-	if err == nil {
-		t.Fatal("expected error for invalid traffic_log_level, got nil")
-	}
-}
-
-func TestValidate_TrafficLogLevelValid(t *testing.T) {
-	for _, level := range []string{"debug", "info", "warn", "error", "none"} {
-		cfg := validConfig()
-		cfg.Services[0].TrafficLogLevel = level
-		if err := Validate(cfg); err != nil {
-			t.Errorf("expected traffic_log_level %q to be valid, got: %v", level, err)
-		}
-	}
-}
-
-func TestValidate_TrafficLogLevelEmpty(t *testing.T) {
-	cfg := validConfig()
-	cfg.Services[0].TrafficLogLevel = ""
+	cfg.Services[0].TrafficLog = boolPtr(true)
 	if err := Validate(cfg); err != nil {
-		t.Fatalf("expected empty traffic_log_level to be valid (inherit global), got: %v", err)
+		t.Fatalf("expected traffic_log=true to be valid, got: %v", err)
+	}
+}
+
+func TestValidate_TrafficLogFalse(t *testing.T) {
+	cfg := validConfig()
+	cfg.Services[0].TrafficLog = boolPtr(false)
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("expected traffic_log=false to be valid, got: %v", err)
+	}
+}
+
+func TestValidate_TrafficLogNil(t *testing.T) {
+	cfg := validConfig()
+	cfg.Services[0].TrafficLog = nil
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("expected traffic_log=nil (default disabled) to be valid, got: %v", err)
 	}
 }
 

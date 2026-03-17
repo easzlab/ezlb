@@ -72,23 +72,27 @@ func BuildLoggers(cfg config.LogConfig) (*Loggers, error) {
 	systemLogger := zap.New(zapcore.NewTee(systemCores...))
 
 	// Build traffic logger: file only (fallback to stdout on error)
+	// Traffic logs are always written at debug level since they record raw
+	// cumulative data; per-service enablement is controlled by the collector.
+	// The file uses the same global rotation rules (max_size, max_backups, etc.).
 	var trafficLogger *zap.Logger
 	if dirErr == nil {
 		trafficFileWriter := newLumberjackWriter(filepath.Join(home, "traffic.log"), cfg)
-		trafficLogger = zap.New(zapcore.NewCore(jsonEncoder, zapcore.AddSync(trafficFileWriter), level))
+		trafficLogger = zap.New(zapcore.NewCore(jsonEncoder, zapcore.AddSync(trafficFileWriter), zapcore.DebugLevel))
 	} else {
 		fmt.Fprintf(os.Stderr, "WARNING: failed to create log directory %q: %v, traffic log will fallback to stdout\n", home, dirErr)
-		trafficLogger = zap.New(zapcore.NewCore(jsonEncoder, zapcore.AddSync(os.Stdout), level))
+		trafficLogger = zap.New(zapcore.NewCore(jsonEncoder, zapcore.AddSync(os.Stdout), zapcore.DebugLevel))
 	}
 
 	// Build NAT logger: file only (fallback to stdout on error)
+	// NAT logs also use debug level for raw data recording, with global rotation rules.
 	var natLogger *zap.Logger
 	if dirErr == nil {
 		natFileWriter := newLumberjackWriter(filepath.Join(home, "nat.log"), cfg)
-		natLogger = zap.New(zapcore.NewCore(jsonEncoder, zapcore.AddSync(natFileWriter), level))
+		natLogger = zap.New(zapcore.NewCore(jsonEncoder, zapcore.AddSync(natFileWriter), zapcore.DebugLevel))
 	} else {
 		fmt.Fprintf(os.Stderr, "WARNING: failed to create log directory %q: %v, nat log will fallback to stdout\n", home, dirErr)
-		natLogger = zap.New(zapcore.NewCore(jsonEncoder, zapcore.AddSync(os.Stdout), level))
+		natLogger = zap.New(zapcore.NewCore(jsonEncoder, zapcore.AddSync(os.Stdout), zapcore.DebugLevel))
 	}
 
 	return &Loggers{

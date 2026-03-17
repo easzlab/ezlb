@@ -25,13 +25,13 @@ type GlobalConfig struct {
 
 // LogConfig holds unified logging configuration.
 type LogConfig struct {
+	Traffic    TrafficLogConfig `yaml:"traffic"     mapstructure:"traffic"`
 	Level      string           `yaml:"level"       mapstructure:"level"`
 	Home       string           `yaml:"home"        mapstructure:"home"`
 	MaxSize    int              `yaml:"max_size"    mapstructure:"max_size"`
 	MaxBackups int              `yaml:"max_backups" mapstructure:"max_backups"`
 	MaxAge     int              `yaml:"max_age"     mapstructure:"max_age"`
 	Compress   bool             `yaml:"compress"    mapstructure:"compress"`
-	Traffic    TrafficLogConfig `yaml:"traffic"     mapstructure:"traffic"`
 }
 
 // validLogLevels is the set of supported log levels.
@@ -40,15 +40,6 @@ var validLogLevels = map[string]bool{
 	"info":  true,
 	"warn":  true,
 	"error": true,
-}
-
-// validTrafficLogLevels extends validLogLevels with "none" for per-service traffic log control.
-var validTrafficLogLevels = map[string]bool{
-	"debug": true,
-	"info":  true,
-	"warn":  true,
-	"error": true,
-	"none":  true,
 }
 
 // GetLevel returns the log level. Defaults to "info" if not set.
@@ -91,8 +82,8 @@ func (l LogConfig) GetMaxAge() int {
 // TrafficLogConfig holds traffic logging specific configuration.
 type TrafficLogConfig struct {
 	Enabled     *bool  `yaml:"enabled"      mapstructure:"enabled"`
-	Interval    string `yaml:"interval"     mapstructure:"interval"`
 	IncludeSNAT *bool  `yaml:"include_snat" mapstructure:"include_snat"`
+	Interval    string `yaml:"interval"     mapstructure:"interval"`
 }
 
 // IsEnabled returns whether traffic logging is enabled. Defaults to true.
@@ -138,15 +129,15 @@ func (g GlobalConfig) IsCleanupOnExit() bool {
 
 // ServiceConfig defines a virtual service with its backends and health check settings.
 type ServiceConfig struct {
-	Name            string            `yaml:"name"              mapstructure:"name"`
-	Listen          string            `yaml:"listen"            mapstructure:"listen"`
-	Protocol        string            `yaml:"protocol"          mapstructure:"protocol"`
-	Scheduler       string            `yaml:"scheduler"         mapstructure:"scheduler"`
-	FullNAT         bool              `yaml:"full_nat"          mapstructure:"full_nat"`
-	SnatIP          string            `yaml:"snat_ip"           mapstructure:"snat_ip"`
-	TrafficLogLevel string            `yaml:"traffic_log_level" mapstructure:"traffic_log_level"`
-	HealthCheck     HealthCheckConfig `yaml:"health_check"      mapstructure:"health_check"`
-	Backends        []BackendConfig   `yaml:"backends"          mapstructure:"backends"`
+	TrafficLog  *bool             `yaml:"traffic_log"       mapstructure:"traffic_log"`
+	Name        string            `yaml:"name"              mapstructure:"name"`
+	Listen      string            `yaml:"listen"            mapstructure:"listen"`
+	Protocol    string            `yaml:"protocol"          mapstructure:"protocol"`
+	Scheduler   string            `yaml:"scheduler"         mapstructure:"scheduler"`
+	SnatIP      string            `yaml:"snat_ip"           mapstructure:"snat_ip"`
+	HealthCheck HealthCheckConfig `yaml:"health_check"      mapstructure:"health_check"`
+	Backends    []BackendConfig   `yaml:"backends"          mapstructure:"backends"`
+	FullNAT     bool              `yaml:"full_nat"          mapstructure:"full_nat"`
 }
 
 // HealthCheckConfig defines per-service health check parameters.
@@ -155,9 +146,9 @@ type HealthCheckConfig struct {
 	Type               string `yaml:"type"                 mapstructure:"type"`
 	Interval           string `yaml:"interval"             mapstructure:"interval"`
 	Timeout            string `yaml:"timeout"              mapstructure:"timeout"`
+	HTTPPath           string `yaml:"http_path"            mapstructure:"http_path"`
 	FailCount          int    `yaml:"fail_count"           mapstructure:"fail_count"`
 	RiseCount          int    `yaml:"rise_count"           mapstructure:"rise_count"`
-	HTTPPath           string `yaml:"http_path"            mapstructure:"http_path"`
 	HTTPExpectedStatus int    `yaml:"http_expected_status" mapstructure:"http_expected_status"`
 }
 
@@ -266,11 +257,11 @@ var validProtocols = map[string]bool{
 // Manager handles configuration loading, validation, and hot-reload.
 type Manager struct {
 	viper      *viper.Viper
-	configPath string
 	current    *Config
-	mu         sync.RWMutex
 	onChange   chan struct{}
 	logger     *zap.Logger
+	configPath string
+	mu         sync.RWMutex
 }
 
 // NewManager creates a config Manager, loads and validates the initial configuration.
@@ -422,11 +413,6 @@ func Validate(cfg *Config) error {
 					return fmt.Errorf("service %q: health_check.http_expected_status must be between 100 and 599", svc.Name)
 				}
 			}
-		}
-
-		// Validate traffic_log_level (if set)
-		if svc.TrafficLogLevel != "" && !validTrafficLogLevels[svc.TrafficLogLevel] {
-			return fmt.Errorf("service %q: unsupported traffic_log_level %q (supported: debug, info, warn, error, none)", svc.Name, svc.TrafficLogLevel)
 		}
 
 		// Validate full_nat and snat_ip

@@ -11,11 +11,11 @@ import (
 
 // backendStatus tracks the health state and consecutive check results for a single backend.
 type backendStatus struct {
+	cancel           context.CancelFunc
 	address          string
-	healthy          bool
 	consecutiveFails int
 	consecutiveOK    int
-	cancel           context.CancelFunc
+	healthy          bool
 }
 
 // serviceCheckConfig holds the health check parameters for a specific service's backends.
@@ -29,11 +29,11 @@ type serviceCheckConfig struct {
 
 // Manager orchestrates health checks for all backends across all services.
 type Manager struct {
-	services map[string]*serviceCheckConfig // key: service name
-	statuses map[string]*backendStatus      // key: backend address
-	mu       sync.RWMutex
+	services map[string]*serviceCheckConfig
+	statuses map[string]*backendStatus
 	onChange func()
 	logger   *zap.Logger
+	mu       sync.RWMutex
 }
 
 // NewManager creates a new health check Manager.

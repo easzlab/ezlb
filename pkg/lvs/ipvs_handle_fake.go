@@ -38,9 +38,9 @@ func makeFakeDestinationKey(dst *Destination) fakeDestinationKey {
 // fakeHandle provides an in-memory IPVS implementation for non-Linux systems.
 // It simulates IPVS kernel behavior using maps, enabling development and testing on macOS.
 type fakeHandle struct {
-	mu           sync.Mutex
 	services     map[fakeServiceKey]*Service
 	destinations map[fakeServiceKey]map[fakeDestinationKey]*Destination
+	mu           sync.Mutex
 }
 
 // NewIPVSHandle creates a fake in-memory IPVS handle for non-Linux systems.
