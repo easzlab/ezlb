@@ -13,28 +13,30 @@ import (
 
 // Server coordinates all modules and manages the overall service lifecycle.
 type Server struct {
-	configMgr  *config.Manager
-	lvsMgr     *lvs.Manager
-	reconciler *lvs.Reconciler
-	healthMgr  *healthcheck.Manager
-	snatMgr    snat.Manager
-	logger     *zap.Logger
+	configMgr     *config.Manager
+	lvsMgr        *lvs.Manager
+	reconciler    *lvs.Reconciler
+	healthMgr     *healthcheck.Manager
+	snatMgr       snat.Manager
+	logger        *zap.Logger
+	trafficLogger *zap.Logger
+	natLogger     *zap.Logger
 }
 
 // NewServer initializes all modules and returns a ready-to-run Server.
-func NewServer(configPath string, logger *zap.Logger) (*Server, error) {
+func NewServer(configPath string, logger *zap.Logger, trafficLogger *zap.Logger, natLogger *zap.Logger) (*Server, error) {
 	// Initialize IPVS manager
 	lvsMgr, err := lvs.NewManager(logger.Named("lvs"))
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize IPVS manager: %w", err)
 	}
 
-	return newServerWithManager(configPath, lvsMgr, logger)
+	return newServerWithManager(configPath, lvsMgr, logger, trafficLogger, natLogger)
 }
 
 // newServerWithManager initializes a Server with a pre-created LVS Manager.
 // This allows tests to inject a platform-appropriate Manager instance.
-func newServerWithManager(configPath string, lvsMgr *lvs.Manager, logger *zap.Logger) (*Server, error) {
+func newServerWithManager(configPath string, lvsMgr *lvs.Manager, logger *zap.Logger, trafficLogger *zap.Logger, natLogger *zap.Logger) (*Server, error) {
 	// Initialize config manager
 	configMgr, err := config.NewManager(configPath, logger.Named("config"))
 	if err != nil {
@@ -48,10 +50,12 @@ func newServerWithManager(configPath string, lvsMgr *lvs.Manager, logger *zap.Lo
 	}
 
 	server := &Server{
-		configMgr: configMgr,
-		lvsMgr:    lvsMgr,
-		snatMgr:   snatMgr,
-		logger:    logger,
+		configMgr:     configMgr,
+		lvsMgr:        lvsMgr,
+		snatMgr:       snatMgr,
+		logger:        logger,
+		trafficLogger: trafficLogger,
+		natLogger:     natLogger,
 	}
 
 	// Initialize health check manager with onChange callback that triggers reconcile

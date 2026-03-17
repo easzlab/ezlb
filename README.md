@@ -33,8 +33,15 @@ Create a config file `config.yaml`:
 
 ```yaml
 global:
-  log_level: info
-  cleanup_on_exit: true    # Remove managed IPVS services and EZLB-SNAT iptables chain on exit (default: true)
+  log:
+    level: info              # Log level: debug, info, warn, error (default: info)
+    home: ./logs             # Log directory (default: ./logs)
+    max_size: 50             # Max size per log file in MB (default: 50)
+    max_backups: 3           # Max number of old log files to retain (default: 3)
+    traffic:
+      enabled: true          # Enable traffic logging (default: true)
+      interval: 15s          # Traffic stats collection interval, min 5s (default: 15s)
+  cleanup_on_exit: true      # Remove managed IPVS services and EZLB-SNAT iptables chain on exit (default: true)
 
 services:
   - name: web-service
@@ -87,6 +94,18 @@ services:
       - address: 192.168.3.11:53
         weight: 1
 ```
+
+### Log Files
+
+ezlb writes structured log files to the configured log directory (`global.log.home`, default `./logs`):
+
+| File | Description |
+|------|-------------|
+| `ezlb.log` | System log (also printed to stdout) |
+| `traffic.log` | Traffic statistics (Phase 2) |
+| `nat.log` | NAT/SNAT operations |
+
+Log files are automatically rotated using [lumberjack](https://github.com/natefinch/lumberjack) based on `max_size`, `max_backups`, `max_age`, and `compress` settings.
 
 ### Usage
 

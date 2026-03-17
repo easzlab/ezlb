@@ -64,7 +64,8 @@ func writeYAMLFile(t *testing.T, dir, content string) string {
 func TestIntegration_FlowA_InitialSync(t *testing.T) {
 	configYAML := `
 global:
-  log_level: info
+  log:
+    level: info
 services:
   - name: web-service
     listen: 10.0.0.1:80
@@ -103,7 +104,7 @@ services:
 	// manager (without flushing IPVS) to verify the reconcile path is idempotent.
 	logger := zap.NewNop()
 	lvsMgr2 := newTestLVSManager(t)
-	srv2, err := newServerWithManager(configPath, lvsMgr2, logger)
+	srv2, err := newServerWithManager(configPath, lvsMgr2, logger, zap.NewNop(), zap.NewNop())
 	if err != nil {
 		t.Fatalf("newServerWithManager failed: %v", err)
 	}
@@ -131,7 +132,8 @@ services:
 func TestIntegration_FlowA_VerifyIPVSState(t *testing.T) {
 	configYAML := `
 global:
-  log_level: info
+  log:
+    level: info
 services:
   - name: web-service
     listen: 10.0.0.1:80
@@ -186,7 +188,8 @@ services:
 func TestIntegration_FlowB_ConfigHotReload(t *testing.T) {
 	initialYAML := `
 global:
-  log_level: info
+  log:
+    level: info
 services:
   - name: web-service
     listen: 10.0.0.1:80
@@ -234,7 +237,8 @@ services:
 	// Modify config: change scheduler and add a backend
 	updatedYAML := `
 global:
-  log_level: info
+  log:
+    level: info
 services:
   - name: web-service
     listen: 10.0.0.1:80
@@ -289,7 +293,8 @@ services:
 func TestIntegration_FlowC_HealthStatusChange(t *testing.T) {
 	configYAML := `
 global:
-  log_level: info
+  log:
+    level: info
 services:
   - name: web-service
     listen: 10.0.0.1:80
@@ -380,7 +385,8 @@ services:
 func TestIntegration_FlowD_GracefulShutdown(t *testing.T) {
 	configYAML := `
 global:
-  log_level: info
+  log:
+    level: info
 services:
   - name: web-service
     listen: 10.0.0.1:80

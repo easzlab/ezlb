@@ -34,7 +34,11 @@ func validServiceConfig() ServiceConfig {
 func validConfig() *Config {
 	svc := validServiceConfig()
 	return &Config{
-		Global:   GlobalConfig{LogLevel: "info"},
+		Global: GlobalConfig{
+			Log: LogConfig{
+				Level: "info",
+			},
+		},
 		Services: []ServiceConfig{svc},
 	}
 }
@@ -554,7 +558,8 @@ func TestHealthCheckConfig_GetRiseCount_Valid(t *testing.T) {
 
 const validYAML = `
 global:
-  log_level: info
+  log:
+    level: info
 services:
   - name: web-service
     listen: 10.0.0.1:80
@@ -627,7 +632,8 @@ func TestManager_LoadInvalidYAML(t *testing.T) {
 func TestManager_LoadValidationFailure(t *testing.T) {
 	invalidCfg := `
 global:
-  log_level: info
+  log:
+    level: info
 services:
   - name: bad-service
     listen: 10.0.0.1:80
@@ -691,10 +697,212 @@ func TestManager_LoadYAML_CleanupOnExitDefault(t *testing.T) {
 	}
 }
 
+// --- LogConfig getter tests ---
+
+func TestLogConfig_GetLevel_Default(t *testing.T) {
+	lc := LogConfig{}
+	if lc.GetLevel() != "info" {
+		t.Errorf("expected default level 'info', got %q", lc.GetLevel())
+	}
+}
+
+func TestLogConfig_GetLevel_Valid(t *testing.T) {
+	lc := LogConfig{Level: "debug"}
+	if lc.GetLevel() != "debug" {
+		t.Errorf("expected level 'debug', got %q", lc.GetLevel())
+	}
+}
+
+func TestLogConfig_GetHome_Default(t *testing.T) {
+	lc := LogConfig{}
+	if lc.GetHome() != "./logs" {
+		t.Errorf("expected default home './logs', got %q", lc.GetHome())
+	}
+}
+
+func TestLogConfig_GetHome_Custom(t *testing.T) {
+	lc := LogConfig{Home: "/var/log/ezlb"}
+	if lc.GetHome() != "/var/log/ezlb" {
+		t.Errorf("expected home '/var/log/ezlb', got %q", lc.GetHome())
+	}
+}
+
+func TestLogConfig_GetMaxSize_Default(t *testing.T) {
+	lc := LogConfig{}
+	if lc.GetMaxSize() != 50 {
+		t.Errorf("expected default max_size 50, got %d", lc.GetMaxSize())
+	}
+}
+
+func TestLogConfig_GetMaxBackups_Default(t *testing.T) {
+	lc := LogConfig{}
+	if lc.GetMaxBackups() != 3 {
+		t.Errorf("expected default max_backups 3, got %d", lc.GetMaxBackups())
+	}
+}
+
+func TestLogConfig_GetMaxAge_Default(t *testing.T) {
+	lc := LogConfig{}
+	if lc.GetMaxAge() != 0 {
+		t.Errorf("expected default max_age 0, got %d", lc.GetMaxAge())
+	}
+}
+
+// --- TrafficLogConfig getter tests ---
+
+func TestTrafficLogConfig_IsEnabled_Default(t *testing.T) {
+	tc := TrafficLogConfig{}
+	if !tc.IsEnabled() {
+		t.Error("expected IsEnabled to return true when Enabled is nil")
+	}
+}
+
+func TestTrafficLogConfig_IsEnabled_False(t *testing.T) {
+	tc := TrafficLogConfig{Enabled: boolPtr(false)}
+	if tc.IsEnabled() {
+		t.Error("expected IsEnabled to return false when Enabled is false")
+	}
+}
+
+func TestTrafficLogConfig_GetInterval_Default(t *testing.T) {
+	tc := TrafficLogConfig{}
+	if tc.GetInterval() != 15*time.Second {
+		t.Errorf("expected default interval 15s, got %v", tc.GetInterval())
+	}
+}
+
+func TestTrafficLogConfig_GetInterval_TooSmall(t *testing.T) {
+	tc := TrafficLogConfig{Interval: "2s"}
+	if tc.GetInterval() != 5*time.Second {
+		t.Errorf("expected clamped interval 5s for too-small value, got %v", tc.GetInterval())
+	}
+}
+
+func TestTrafficLogConfig_GetInterval_Valid(t *testing.T) {
+	tc := TrafficLogConfig{Interval: "30s"}
+	if tc.GetInterval() != 30*time.Second {
+		t.Errorf("expected interval 30s, got %v", tc.GetInterval())
+	}
+}
+
+func TestTrafficLogConfig_IsIncludeSNAT_Default(t *testing.T) {
+	tc := TrafficLogConfig{}
+	if !tc.IsIncludeSNAT() {
+		t.Error("expected IsIncludeSNAT to return true when IncludeSNAT is nil")
+	}
+}
+
+func TestTrafficLogConfig_IsIncludeSNAT_False(t *testing.T) {
+	tc := TrafficLogConfig{IncludeSNAT: boolPtr(false)}
+	if tc.IsIncludeSNAT() {
+		t.Error("expected IsIncludeSNAT to return false when IncludeSNAT is false")
+	}
+}
+
+// --- Validate log-related tests ---
+
+func TestValidate_LogLevelInvalid(t *testing.T) {
+	cfg := validConfig()
+	cfg.Global.Log.Level = "trace"
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for invalid log level, got nil")
+	}
+}
+
+func TestValidate_TrafficLogLevelInvalid(t *testing.T) {
+	cfg := validConfig()
+	cfg.Services[0].TrafficLogLevel = "trace"
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for invalid traffic_log_level, got nil")
+	}
+}
+
+func TestValidate_TrafficLogLevelValid(t *testing.T) {
+	for _, level := range []string{"debug", "info", "warn", "error", "none"} {
+		cfg := validConfig()
+		cfg.Services[0].TrafficLogLevel = level
+		if err := Validate(cfg); err != nil {
+			t.Errorf("expected traffic_log_level %q to be valid, got: %v", level, err)
+		}
+	}
+}
+
+func TestValidate_TrafficLogLevelEmpty(t *testing.T) {
+	cfg := validConfig()
+	cfg.Services[0].TrafficLogLevel = ""
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("expected empty traffic_log_level to be valid (inherit global), got: %v", err)
+	}
+}
+
+func TestValidate_TrafficIntervalTooSmall(t *testing.T) {
+	cfg := validConfig()
+	cfg.Global.Log.Traffic.Interval = "2s"
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for traffic interval < 5s, got nil")
+	}
+}
+
+func TestValidate_TrafficIntervalValid(t *testing.T) {
+	cfg := validConfig()
+	cfg.Global.Log.Traffic.Interval = "30s"
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("expected valid traffic interval, got: %v", err)
+	}
+}
+
+func TestManager_LoadYAML_NewLogConfig(t *testing.T) {
+	yaml := `
+global:
+  log:
+    level: debug
+    home: /tmp/ezlb-logs
+    max_size: 100
+    traffic:
+      enabled: false
+      interval: 30s
+services:
+  - name: web-service
+    listen: 10.0.0.1:80
+    protocol: tcp
+    scheduler: rr
+    health_check:
+      enabled: false
+    backends:
+      - address: 192.168.1.10:8080
+        weight: 1
+`
+	path := writeTestYAML(t, yaml)
+	mgr, err := NewManager(path, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager failed: %v", err)
+	}
+	cfg := mgr.GetConfig()
+	if cfg.Global.Log.GetLevel() != "debug" {
+		t.Errorf("expected log level 'debug', got %q", cfg.Global.Log.GetLevel())
+	}
+	if cfg.Global.Log.GetHome() != "/tmp/ezlb-logs" {
+		t.Errorf("expected log home '/tmp/ezlb-logs', got %q", cfg.Global.Log.GetHome())
+	}
+	if cfg.Global.Log.GetMaxSize() != 100 {
+		t.Errorf("expected max_size 100, got %d", cfg.Global.Log.GetMaxSize())
+	}
+	if cfg.Global.Log.Traffic.IsEnabled() {
+		t.Error("expected traffic logging to be disabled")
+	}
+	if cfg.Global.Log.Traffic.GetInterval() != 30*time.Second {
+		t.Errorf("expected traffic interval 30s, got %v", cfg.Global.Log.Traffic.GetInterval())
+	}
+}
+
 func TestManager_LoadYAML_CleanupOnExitFalse(t *testing.T) {
 	yaml := `
 global:
-  log_level: info
+  log:
+    level: info
   cleanup_on_exit: false
 services:
   - name: web-service

@@ -19,8 +19,112 @@ type Config struct {
 
 // GlobalConfig holds global settings.
 type GlobalConfig struct {
-	LogLevel      string `yaml:"log_level"       mapstructure:"log_level"`
-	CleanupOnExit *bool  `yaml:"cleanup_on_exit" mapstructure:"cleanup_on_exit"`
+	Log           LogConfig `yaml:"log"            mapstructure:"log"`
+	CleanupOnExit *bool     `yaml:"cleanup_on_exit" mapstructure:"cleanup_on_exit"`
+}
+
+// LogConfig holds unified logging configuration.
+type LogConfig struct {
+	Level      string           `yaml:"level"       mapstructure:"level"`
+	Home       string           `yaml:"home"        mapstructure:"home"`
+	MaxSize    int              `yaml:"max_size"    mapstructure:"max_size"`
+	MaxBackups int              `yaml:"max_backups" mapstructure:"max_backups"`
+	MaxAge     int              `yaml:"max_age"     mapstructure:"max_age"`
+	Compress   bool             `yaml:"compress"    mapstructure:"compress"`
+	Traffic    TrafficLogConfig `yaml:"traffic"     mapstructure:"traffic"`
+}
+
+// validLogLevels is the set of supported log levels.
+var validLogLevels = map[string]bool{
+	"debug": true,
+	"info":  true,
+	"warn":  true,
+	"error": true,
+}
+
+// validTrafficLogLevels extends validLogLevels with "none" for per-service traffic log control.
+var validTrafficLogLevels = map[string]bool{
+	"debug": true,
+	"info":  true,
+	"warn":  true,
+	"error": true,
+	"none":  true,
+}
+
+// GetLevel returns the log level. Defaults to "info" if not set.
+func (l LogConfig) GetLevel() string {
+	if l.Level == "" {
+		return "info"
+	}
+	return l.Level
+}
+
+// GetHome returns the log directory. Defaults to "./logs" if not set.
+func (l LogConfig) GetHome() string {
+	if l.Home == "" {
+		return "./logs"
+	}
+	return l.Home
+}
+
+// GetMaxSize returns the max size in MB per log file. Defaults to 50.
+func (l LogConfig) GetMaxSize() int {
+	if l.MaxSize <= 0 {
+		return 50
+	}
+	return l.MaxSize
+}
+
+// GetMaxBackups returns the max number of old log files to retain. Defaults to 3.
+func (l LogConfig) GetMaxBackups() int {
+	if l.MaxBackups <= 0 {
+		return 3
+	}
+	return l.MaxBackups
+}
+
+// GetMaxAge returns the max age in days to retain old log files. Defaults to 0 (no limit).
+func (l LogConfig) GetMaxAge() int {
+	return l.MaxAge
+}
+
+// TrafficLogConfig holds traffic logging specific configuration.
+type TrafficLogConfig struct {
+	Enabled     *bool  `yaml:"enabled"      mapstructure:"enabled"`
+	Interval    string `yaml:"interval"     mapstructure:"interval"`
+	IncludeSNAT *bool  `yaml:"include_snat" mapstructure:"include_snat"`
+}
+
+// IsEnabled returns whether traffic logging is enabled. Defaults to true.
+func (t TrafficLogConfig) IsEnabled() bool {
+	if t.Enabled == nil {
+		return true
+	}
+	return *t.Enabled
+}
+
+// GetInterval parses and returns the traffic logging interval.
+// Defaults to 15s. Minimum is 5s; values below 5s are clamped to 5s.
+func (t TrafficLogConfig) GetInterval() time.Duration {
+	if t.Interval == "" {
+		return 15 * time.Second
+	}
+	duration, err := time.ParseDuration(t.Interval)
+	if err != nil {
+		return 15 * time.Second
+	}
+	if duration < 5*time.Second {
+		return 5 * time.Second
+	}
+	return duration
+}
+
+// IsIncludeSNAT returns whether to include SNAT statistics in traffic logs. Defaults to true.
+func (t TrafficLogConfig) IsIncludeSNAT() bool {
+	if t.IncludeSNAT == nil {
+		return true
+	}
+	return *t.IncludeSNAT
 }
 
 // IsCleanupOnExit returns whether to clean up IPVS and iptables rules on exit.
@@ -34,14 +138,15 @@ func (g GlobalConfig) IsCleanupOnExit() bool {
 
 // ServiceConfig defines a virtual service with its backends and health check settings.
 type ServiceConfig struct {
-	Name        string            `yaml:"name"         mapstructure:"name"`
-	Listen      string            `yaml:"listen"       mapstructure:"listen"`
-	Protocol    string            `yaml:"protocol"     mapstructure:"protocol"`
-	Scheduler   string            `yaml:"scheduler"    mapstructure:"scheduler"`
-	FullNAT     bool              `yaml:"full_nat"     mapstructure:"full_nat"`
-	SnatIP      string            `yaml:"snat_ip"      mapstructure:"snat_ip"`
-	HealthCheck HealthCheckConfig `yaml:"health_check" mapstructure:"health_check"`
-	Backends    []BackendConfig   `yaml:"backends"     mapstructure:"backends"`
+	Name            string            `yaml:"name"              mapstructure:"name"`
+	Listen          string            `yaml:"listen"            mapstructure:"listen"`
+	Protocol        string            `yaml:"protocol"          mapstructure:"protocol"`
+	Scheduler       string            `yaml:"scheduler"         mapstructure:"scheduler"`
+	FullNAT         bool              `yaml:"full_nat"          mapstructure:"full_nat"`
+	SnatIP          string            `yaml:"snat_ip"           mapstructure:"snat_ip"`
+	TrafficLogLevel string            `yaml:"traffic_log_level" mapstructure:"traffic_log_level"`
+	HealthCheck     HealthCheckConfig `yaml:"health_check"      mapstructure:"health_check"`
+	Backends        []BackendConfig   `yaml:"backends"          mapstructure:"backends"`
 }
 
 // HealthCheckConfig defines per-service health check parameters.
@@ -174,7 +279,15 @@ func NewManager(configPath string, logger *zap.Logger) (*Manager, error) {
 	viperInstance.SetConfigFile(configPath)
 
 	// Set defaults
-	viperInstance.SetDefault("global.log_level", "info")
+	viperInstance.SetDefault("global.log.level", "info")
+	viperInstance.SetDefault("global.log.home", "./logs")
+	viperInstance.SetDefault("global.log.max_size", 50)
+	viperInstance.SetDefault("global.log.max_backups", 3)
+	viperInstance.SetDefault("global.log.max_age", 0)
+	viperInstance.SetDefault("global.log.compress", false)
+	viperInstance.SetDefault("global.log.traffic.enabled", true)
+	viperInstance.SetDefault("global.log.traffic.interval", "15s")
+	viperInstance.SetDefault("global.log.traffic.include_snat", true)
 	viperInstance.SetDefault("global.cleanup_on_exit", true)
 
 	manager := &Manager{
@@ -213,6 +326,23 @@ func (m *Manager) Load() (*Config, error) {
 
 // Validate checks the configuration for correctness.
 func Validate(cfg *Config) error {
+	// Validate log level
+	logLevel := cfg.Global.Log.GetLevel()
+	if !validLogLevels[logLevel] {
+		return fmt.Errorf("global.log.level: unsupported level %q (supported: debug, info, warn, error)", logLevel)
+	}
+
+	// Validate traffic logging interval
+	if cfg.Global.Log.Traffic.Interval != "" {
+		interval, err := time.ParseDuration(cfg.Global.Log.Traffic.Interval)
+		if err != nil {
+			return fmt.Errorf("global.log.traffic.interval: invalid duration %q: %w", cfg.Global.Log.Traffic.Interval, err)
+		}
+		if interval < 5*time.Second {
+			return fmt.Errorf("global.log.traffic.interval: minimum interval is 5s, got %v", interval)
+		}
+	}
+
 	if len(cfg.Services) == 0 {
 		return fmt.Errorf("at least one service must be defined")
 	}
@@ -292,6 +422,11 @@ func Validate(cfg *Config) error {
 					return fmt.Errorf("service %q: health_check.http_expected_status must be between 100 and 599", svc.Name)
 				}
 			}
+		}
+
+		// Validate traffic_log_level (if set)
+		if svc.TrafficLogLevel != "" && !validTrafficLogLevels[svc.TrafficLogLevel] {
+			return fmt.Errorf("service %q: unsupported traffic_log_level %q (supported: debug, info, warn, error, none)", svc.Name, svc.TrafficLogLevel)
 		}
 
 		// Validate full_nat and snat_ip

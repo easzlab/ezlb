@@ -33,8 +33,15 @@ make build-linux
 
 ```yaml
 global:
-  log_level: info
-  cleanup_on_exit: true    # 退出时删除 ezlb 管理的 IPVS 服务和 EZLB-SNAT iptables 链（默认: true）
+  log:
+    level: info              # 日志级别: debug, info, warn, error（默认: info）
+    home: ./logs             # 日志目录（默认: ./logs）
+    max_size: 50             # 单个日志文件最大 MB（默认: 50）
+    max_backups: 3           # 保留旧日志文件数量（默认: 3）
+    traffic:
+      enabled: true          # 启用流量日志（默认: true）
+      interval: 15s          # 流量统计采集间隔，最小 5s（默认: 15s）
+  cleanup_on_exit: true      # 退出时删除 ezlb 管理的 IPVS 服务和 EZLB-SNAT iptables 链（默认: true）
 
 services:
   - name: web-service
@@ -87,6 +94,18 @@ services:
       - address: 192.168.3.11:53
         weight: 1
 ```
+
+### 日志文件
+
+ezlb 将结构化日志写入配置的日志目录（`global.log.home`，默认 `./logs`）：
+
+| 文件 | 说明 |
+|------|------|
+| `ezlb.log` | 系统日志（同时输出到 stdout） |
+| `traffic.log` | 流量统计日志（Phase 2 实现） |
+| `nat.log` | NAT/SNAT 操作日志 |
+
+日志文件基于 [lumberjack](https://github.com/natefinch/lumberjack) 自动轮转，可通过 `max_size`、`max_backups`、`max_age`、`compress` 配置。
 
 ### 运行
 

@@ -7,16 +7,18 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/easzlab/ezlb/pkg/config"
+	"github.com/easzlab/ezlb/pkg/logutil"
 	"github.com/easzlab/ezlb/pkg/server"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
 var (
 	BuildTime   string
 	BuildCommit string
-	Version     = "0.3.3"
+	Version     = "0.4.0"
 	configPath  string
 	showVersion bool
 )
@@ -77,15 +79,38 @@ func newStartCommand() *cobra.Command {
 
 // startDaemon starts the server in daemon mode with signal handling.
 func startDaemon(cmd *cobra.Command, args []string) error {
-	logger := newLogger()
-	defer logger.Sync()
+	// Phase 1: Bootstrap logger (stdout only, info level) for early startup messages
+	bootstrapLogger := logutil.NewBootstrapLogger()
 
-	logger.Info("starting ezlb",
+	bootstrapLogger.Info("starting ezlb",
 		zap.String("version", Version),
 		zap.String("config", configPath),
 	)
 
-	srv, err := server.NewServer(configPath, logger)
+	// Phase 2: Pre-read log config to build proper loggers before full config load
+	logCfg, err := loadLogConfig(configPath)
+	if err != nil {
+		bootstrapLogger.Warn("failed to pre-read log config, using defaults", zap.Error(err))
+		logCfg = config.LogConfig{} // use defaults
+	}
+	_ = bootstrapLogger.Sync()
+
+	// Phase 3: Build production loggers with file output and rotation
+	loggers, err := logutil.BuildLoggers(logCfg)
+	if err != nil {
+		bootstrapLogger.Fatal("failed to build loggers", zap.Error(err))
+	}
+	defer loggers.SyncAll()
+
+	logger := loggers.System
+
+	logger.Info("loggers initialized",
+		zap.String("level", logCfg.GetLevel()),
+		zap.String("home", logCfg.GetHome()),
+	)
+
+	// Phase 4: Create server with all three loggers
+	srv, err := server.NewServer(configPath, logger, loggers.Traffic, loggers.NAT)
 	if err != nil {
 		logger.Fatal("failed to create server", zap.Error(err))
 	}
@@ -108,15 +133,31 @@ func startDaemon(cmd *cobra.Command, args []string) error {
 
 // runOnce performs a single reconcile pass and exits.
 func runOnce(cmd *cobra.Command, args []string) error {
-	logger := newLogger()
-	defer logger.Sync()
+	// Phase 1: Bootstrap logger
+	bootstrapLogger := logutil.NewBootstrapLogger()
 
-	logger.Info("running single reconcile",
+	bootstrapLogger.Info("running single reconcile",
 		zap.String("version", Version),
 		zap.String("config", configPath),
 	)
 
-	srv, err := server.NewServer(configPath, logger)
+	// Phase 2: Pre-read log config
+	logCfg, err := loadLogConfig(configPath)
+	if err != nil {
+		bootstrapLogger.Warn("failed to pre-read log config, using defaults", zap.Error(err))
+		logCfg = config.LogConfig{}
+	}
+	_ = bootstrapLogger.Sync()
+
+	// Phase 3: Build production loggers
+	loggers, err := logutil.BuildLoggers(logCfg)
+	if err != nil {
+		return fmt.Errorf("failed to build loggers: %w", err)
+	}
+	defer loggers.SyncAll()
+
+	// Phase 4: Create server
+	srv, err := server.NewServer(configPath, loggers.System, loggers.Traffic, loggers.NAT)
 	if err != nil {
 		return fmt.Errorf("failed to create server: %w", err)
 	}
@@ -124,24 +165,32 @@ func runOnce(cmd *cobra.Command, args []string) error {
 	return srv.RunOnce()
 }
 
-// newLogger creates a production zap logger with console encoding for readability.
-func newLogger() *zap.Logger {
-	encoderConfig := zap.NewProductionEncoderConfig()
-	encoderConfig.TimeKey = "time"
-	encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
-	encoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
+// loadLogConfig pre-reads only the global.log section from the config file.
+// This allows building proper loggers before the full config validation runs.
+func loadLogConfig(path string) (config.LogConfig, error) {
+	v := viper.New()
+	v.SetConfigFile(path)
 
-	loggerConfig := zap.Config{
-		Level:            zap.NewAtomicLevelAt(zap.InfoLevel),
-		Encoding:         "console",
-		EncoderConfig:    encoderConfig,
-		OutputPaths:      []string{"stdout"},
-		ErrorOutputPaths: []string{"stderr"},
+	// Set defaults matching config.NewManager
+	v.SetDefault("global.log.level", "info")
+	v.SetDefault("global.log.home", "./logs")
+	v.SetDefault("global.log.max_size", 50)
+	v.SetDefault("global.log.max_backups", 3)
+	v.SetDefault("global.log.max_age", 0)
+	v.SetDefault("global.log.compress", false)
+
+	if err := v.ReadInConfig(); err != nil {
+		return config.LogConfig{}, fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	logger, err := loggerConfig.Build()
-	if err != nil {
-		panic(fmt.Sprintf("failed to create logger: %v", err))
+	var cfg struct {
+		Global struct {
+			Log config.LogConfig `mapstructure:"log"`
+		} `mapstructure:"global"`
 	}
-	return logger
+	if err := v.Unmarshal(&cfg); err != nil {
+		return config.LogConfig{}, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+
+	return cfg.Global.Log, nil
 }
