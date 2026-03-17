@@ -19,8 +19,8 @@ type Config struct {
 
 // GlobalConfig holds global settings.
 type GlobalConfig struct {
-	Log           LogConfig `yaml:"log"            mapstructure:"log"`
 	CleanupOnExit *bool     `yaml:"cleanup_on_exit" mapstructure:"cleanup_on_exit"`
+	Log           LogConfig `yaml:"log"            mapstructure:"log"`
 }
 
 // LogConfig holds unified logging configuration.
@@ -135,8 +135,8 @@ type ServiceConfig struct {
 	Protocol    string            `yaml:"protocol"          mapstructure:"protocol"`
 	Scheduler   string            `yaml:"scheduler"         mapstructure:"scheduler"`
 	SnatIP      string            `yaml:"snat_ip"           mapstructure:"snat_ip"`
-	HealthCheck HealthCheckConfig `yaml:"health_check"      mapstructure:"health_check"`
 	Backends    []BackendConfig   `yaml:"backends"          mapstructure:"backends"`
+	HealthCheck HealthCheckConfig `yaml:"health_check"      mapstructure:"health_check"`
 	FullNAT     bool              `yaml:"full_nat"          mapstructure:"full_nat"`
 }
 

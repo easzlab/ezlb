@@ -46,7 +46,11 @@ func newServerWithManager(configPath string, lvsMgr *lvs.Manager, logger *zap.Lo
 	}
 
 	// Initialize SNAT manager
-	snatMgr, err := snat.NewManager(logger.Named("snat"))
+	snatManagerLogger := natLogger
+	if snatManagerLogger == nil {
+		snatManagerLogger = logger
+	}
+	snatMgr, err := snat.NewManager(snatManagerLogger.Named("snat"))
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize SNAT manager: %w", err)
 	}
@@ -84,31 +88,7 @@ func (s *Server) Run(ctx context.Context) error {
 		s.logger.Error("initial reconcile failed", zap.Error(err))
 	}
 
-	// Start traffic collector if enabled (daemon mode only)
-	if cfg.Global.Log.Traffic.IsEnabled() {
-		lvsStats := trafficlog.NewLVSStatsAdapter(s.lvsMgr)
-
-		// Check if snat manager supports statistics via type assertion
-		var snatStats trafficlog.SNATStatsProvider
-		if sp, ok := s.snatMgr.(snat.StatsProvider); ok {
-			snatStats = &snatStatsAdapter{provider: sp}
-		}
-
-		s.collector = trafficlog.NewCollector(
-			lvsStats,
-			snatStats,
-			s.trafficLogger,
-			s.natLogger,
-			s.logger,
-			cfg.Services,
-			cfg.Global.Log.Traffic,
-		)
-		s.collector.Start()
-		s.logger.Info("traffic collector started",
-			zap.Duration("interval", cfg.Global.Log.Traffic.GetInterval()),
-			zap.Bool("include_snat", cfg.Global.Log.Traffic.IsIncludeSNAT()),
-		)
-	}
+	s.syncTrafficCollector(cfg)
 
 	// Start config file watching
 	s.configMgr.WatchConfig()
@@ -125,10 +105,7 @@ func (s *Server) Run(ctx context.Context) error {
 			if err := s.reconciler.Reconcile(newCfg.Services); err != nil {
 				s.logger.Error("reconcile after config change failed", zap.Error(err))
 			}
-			// Update traffic collector config
-			if s.collector != nil {
-				s.collector.UpdateConfig(newCfg.Services, newCfg.Global.Log.Traffic)
-			}
+			s.syncTrafficCollector(newCfg)
 
 		case <-ctx.Done():
 			s.logger.Info("shutdown signal received, stopping server")
@@ -160,6 +137,43 @@ func (s *Server) triggerReconcile() {
 	if err := s.reconciler.Reconcile(cfg.Services); err != nil {
 		s.logger.Error("reconcile after health change failed", zap.Error(err))
 	}
+}
+
+func (s *Server) syncTrafficCollector(cfg *config.Config) {
+	if cfg == nil {
+		return
+	}
+
+	if s.collector == nil {
+		if !cfg.Global.Log.Traffic.IsEnabled() {
+			return
+		}
+
+		lvsStats := trafficlog.NewLVSStatsAdapter(s.lvsMgr)
+
+		var snatStats trafficlog.SNATStatsProvider
+		if sp, ok := s.snatMgr.(snat.StatsProvider); ok {
+			snatStats = &snatStatsAdapter{provider: sp}
+		}
+
+		s.collector = trafficlog.NewCollector(
+			lvsStats,
+			snatStats,
+			s.trafficLogger,
+			s.natLogger,
+			s.logger,
+			cfg.Services,
+			cfg.Global.Log.Traffic,
+		)
+		s.collector.Start()
+		s.logger.Info("traffic collector started",
+			zap.Duration("interval", cfg.Global.Log.Traffic.GetInterval()),
+			zap.Bool("include_snat", cfg.Global.Log.Traffic.IsIncludeSNAT()),
+		)
+		return
+	}
+
+	s.collector.UpdateConfig(cfg.Services, cfg.Global.Log.Traffic)
 }
 
 // shutdown gracefully stops all modules.
