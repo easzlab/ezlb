@@ -79,6 +79,7 @@ func newServerWithManager(configPath string, lvsMgr *lvs.Manager, logger *zap.Lo
 // and config watching, then enters the main event loop until context is cancelled.
 func (s *Server) Run(ctx context.Context) error {
 	cfg := s.configMgr.GetConfig()
+	s.logKernelParamPreflight()
 
 	// Register health check targets and start checking
 	s.healthMgr.UpdateTargets(ctx, cfg.Services)
@@ -121,6 +122,7 @@ func (s *Server) Run(ctx context.Context) error {
 // the desired state and leave it in place.
 func (s *Server) RunOnce() error {
 	cfg := s.configMgr.GetConfig()
+	s.logKernelParamPreflight()
 
 	err := s.reconciler.Reconcile(cfg.Services)
 	s.lvsMgr.Close()
