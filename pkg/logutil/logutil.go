@@ -72,27 +72,28 @@ func BuildLoggers(cfg config.LogConfig) (*Loggers, error) {
 	systemLogger := zap.New(zapcore.NewTee(systemCores...))
 
 	// Build traffic logger: file only (fallback to stdout on error)
-	// Traffic logs are always written at debug level since they record raw
-	// cumulative data; per-service enablement is controlled by the collector.
-	// The file uses the same global rotation rules (max_size, max_backups, etc.).
+	// Traffic log call sites use Debug(), but whether they are written is still
+	// controlled by the global log level. This keeps traffic.log gated by
+	// global.log.level while still classifying the entries themselves as debug.
 	var trafficLogger *zap.Logger
 	if dirErr == nil {
 		trafficFileWriter := newLumberjackWriter(filepath.Join(home, "traffic.log"), cfg)
-		trafficLogger = zap.New(zapcore.NewCore(jsonEncoder, zapcore.AddSync(trafficFileWriter), zapcore.DebugLevel))
+		trafficLogger = zap.New(zapcore.NewCore(jsonEncoder, zapcore.AddSync(trafficFileWriter), level))
 	} else {
 		fmt.Fprintf(os.Stderr, "WARNING: failed to create log directory %q: %v, traffic log will fallback to stdout\n", home, dirErr)
-		trafficLogger = zap.New(zapcore.NewCore(jsonEncoder, zapcore.AddSync(os.Stdout), zapcore.DebugLevel))
+		trafficLogger = zap.New(zapcore.NewCore(jsonEncoder, zapcore.AddSync(os.Stdout), level))
 	}
 
 	// Build NAT logger: file only (fallback to stdout on error)
-	// NAT logs also use debug level for raw data recording, with global rotation rules.
+	// NAT log call sites also use Debug() for routine operations/raw stats, and
+	// the global log level decides whether those debug entries are emitted.
 	var natLogger *zap.Logger
 	if dirErr == nil {
 		natFileWriter := newLumberjackWriter(filepath.Join(home, "nat.log"), cfg)
-		natLogger = zap.New(zapcore.NewCore(jsonEncoder, zapcore.AddSync(natFileWriter), zapcore.DebugLevel))
+		natLogger = zap.New(zapcore.NewCore(jsonEncoder, zapcore.AddSync(natFileWriter), level))
 	} else {
 		fmt.Fprintf(os.Stderr, "WARNING: failed to create log directory %q: %v, nat log will fallback to stdout\n", home, dirErr)
-		natLogger = zap.New(zapcore.NewCore(jsonEncoder, zapcore.AddSync(os.Stdout), zapcore.DebugLevel))
+		natLogger = zap.New(zapcore.NewCore(jsonEncoder, zapcore.AddSync(os.Stdout), level))
 	}
 
 	return &Loggers{

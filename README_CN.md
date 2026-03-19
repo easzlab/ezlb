@@ -34,7 +34,7 @@ make build-linux
 ```yaml
 global:
   log:
-    level: info              # 日志级别: debug, info, warn, error（默认: info）
+    level: info              # 全局日志级别；traffic/nat 的 debug 日志仅在设为 debug 时写入
     home: ./logs             # 日志目录（默认: ./logs）
     max_size: 50             # 单个日志文件最大 MB（默认: 50）
     max_backups: 3           # 保留旧日志文件数量（默认: 3）
@@ -102,8 +102,8 @@ ezlb 将结构化日志写入配置的日志目录（`global.log.home`，默认 
 | 文件 | 说明 |
 |------|------|
 | `ezlb.log` | 系统日志（同时输出到 stdout） |
-| `traffic.log` | 流量统计日志（Phase 2 实现） |
-| `nat.log` | NAT/SNAT 操作日志 |
+| `traffic.log` | 流量统计日志；仅当 `global.log.level=debug` 时写入 debug 级别统计 |
+| `nat.log` | NAT/SNAT 统计与常规操作日志；主要在 `global.log.level=debug` 时写入 |
 
 日志文件基于 [lumberjack](https://github.com/natefinch/lumberjack) 自动轮转，可通过 `max_size`、`max_backups`、`max_age`、`compress` 配置。
 

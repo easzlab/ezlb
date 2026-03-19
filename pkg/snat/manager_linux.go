@@ -62,7 +62,7 @@ func (m *linuxManager) ensureChain() error {
 		if err := m.ipt.NewChain(natTable, snatChain); err != nil {
 			return fmt.Errorf("failed to create chain %s: %w", snatChain, err)
 		}
-		m.logger.Info("created iptables chain", zap.String("chain", snatChain))
+		m.logger.Debug("created iptables chain", zap.String("chain", snatChain))
 	}
 
 	jumpRule := []string{"-j", snatChain}
@@ -84,7 +84,7 @@ func (m *linuxManager) ensureForwardChain() error {
 		if err := m.ipt.NewChain(filterTable, forwardChain); err != nil {
 			return fmt.Errorf("failed to create chain %s: %w", forwardChain, err)
 		}
-		m.logger.Info("created iptables chain", zap.String("chain", forwardChain))
+		m.logger.Debug("created iptables chain", zap.String("chain", forwardChain))
 	}
 
 	// Insert jump rule at the top of FORWARD chain so it takes priority.
@@ -127,7 +127,7 @@ func (m *linuxManager) Reconcile(desired []SNATRule) error {
 				m.logger.Error("failed to delete SNAT rule", zap.String("key", key), zap.Error(err))
 			} else {
 				delete(m.managed, key)
-				m.logger.Info("deleted SNAT rule", zap.String("key", key))
+				m.logger.Debug("deleted SNAT rule", zap.String("key", key))
 			}
 		}
 	}
@@ -149,7 +149,7 @@ func (m *linuxManager) Reconcile(desired []SNATRule) error {
 			m.logger.Error("failed to add SNAT rule", zap.String("key", key), zap.Error(err))
 		} else {
 			m.managed[key] = rule
-			m.logger.Info("added SNAT rule", zap.String("key", key), zap.String("snat_ip", rule.SnatIP))
+			m.logger.Debug("added SNAT rule", zap.String("key", key), zap.String("snat_ip", rule.SnatIP))
 		}
 	}
 
@@ -175,7 +175,7 @@ func (m *linuxManager) ReconcileForward(desired []ForwardRule) error {
 				m.logger.Error("failed to delete FORWARD rule", zap.String("key", key), zap.Error(err))
 			} else {
 				delete(m.managedForward, key)
-				m.logger.Info("deleted FORWARD rule", zap.String("key", key))
+				m.logger.Debug("deleted FORWARD rule", zap.String("key", key))
 			}
 		}
 	}
@@ -189,7 +189,7 @@ func (m *linuxManager) ReconcileForward(desired []ForwardRule) error {
 			m.logger.Error("failed to add FORWARD rule", zap.String("key", key), zap.Error(err))
 		} else {
 			m.managedForward[key] = rule
-			m.logger.Info("added FORWARD rule", zap.String("key", key))
+			m.logger.Debug("added FORWARD rule", zap.String("key", key))
 		}
 	}
 
@@ -216,7 +216,7 @@ func (m *linuxManager) Cleanup() error {
 	}
 
 	m.managed = make(map[string]SNATRule)
-	m.logger.Info("cleaned up all SNAT rules")
+	m.logger.Debug("cleaned up all SNAT rules")
 
 	// Clean up FORWARD chain
 	if err := m.ipt.ClearChain(filterTable, forwardChain); err != nil {
@@ -233,7 +233,7 @@ func (m *linuxManager) Cleanup() error {
 	}
 
 	m.managedForward = make(map[string]ForwardRule)
-	m.logger.Info("cleaned up all FORWARD rules")
+	m.logger.Debug("cleaned up all FORWARD rules")
 
 	return nil
 }

@@ -3,6 +3,7 @@ package logutil
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/easzlab/ezlb/pkg/config"
@@ -146,5 +147,74 @@ func TestBuildLoggers_CreatesLogFiles(t *testing.T) {
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			t.Errorf("expected log file %q to exist", path)
 		}
+	}
+}
+
+func TestBuildLoggers_TrafficAndNATFollowGlobalLevel(t *testing.T) {
+	t.Run("info filters debug traffic and nat entries", func(t *testing.T) {
+		dir := t.TempDir()
+		cfg := config.LogConfig{
+			Level: "info",
+			Home:  dir,
+		}
+
+		loggers, err := BuildLoggers(cfg)
+		if err != nil {
+			t.Fatalf("BuildLoggers failed: %v", err)
+		}
+
+		loggers.Traffic.Debug("traffic hidden at info")
+		loggers.NAT.Debug("nat hidden at info")
+		loggers.SyncAll()
+
+		assertLogFileMissingOrEmpty(t, filepath.Join(dir, "traffic.log"))
+		assertLogFileMissingOrEmpty(t, filepath.Join(dir, "nat.log"))
+	})
+
+	t.Run("debug writes debug traffic and nat entries", func(t *testing.T) {
+		dir := t.TempDir()
+		cfg := config.LogConfig{
+			Level: "debug",
+			Home:  dir,
+		}
+
+		loggers, err := BuildLoggers(cfg)
+		if err != nil {
+			t.Fatalf("BuildLoggers failed: %v", err)
+		}
+
+		loggers.Traffic.Debug("traffic visible at debug")
+		loggers.NAT.Debug("nat visible at debug")
+		loggers.SyncAll()
+
+		assertLogFileContains(t, filepath.Join(dir, "traffic.log"), "traffic visible at debug")
+		assertLogFileContains(t, filepath.Join(dir, "nat.log"), "nat visible at debug")
+	})
+}
+
+func assertLogFileMissingOrEmpty(t *testing.T, path string) {
+	t.Helper()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return
+		}
+		t.Fatalf("failed to read %q: %v", path, err)
+	}
+	if len(data) != 0 {
+		t.Fatalf("expected %q to be empty, got %q", path, string(data))
+	}
+}
+
+func assertLogFileContains(t *testing.T, path string, want string) {
+	t.Helper()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read %q: %v", path, err)
+	}
+	if !strings.Contains(string(data), want) {
+		t.Fatalf("expected %q to contain %q, got %q", path, want, string(data))
 	}
 }

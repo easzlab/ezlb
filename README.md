@@ -34,7 +34,7 @@ Create a config file `config.yaml`:
 ```yaml
 global:
   log:
-    level: info              # Log level: debug, info, warn, error (default: info)
+    level: info              # Global log level; traffic/nat debug logs are written only when set to debug
     home: ./logs             # Log directory (default: ./logs)
     max_size: 50             # Max size per log file in MB (default: 50)
     max_backups: 3           # Max number of old log files to retain (default: 3)
@@ -102,8 +102,8 @@ ezlb writes structured log files to the configured log directory (`global.log.ho
 | File | Description |
 |------|-------------|
 | `ezlb.log` | System log (also printed to stdout) |
-| `traffic.log` | Traffic statistics (Phase 2) |
-| `nat.log` | NAT/SNAT operations |
+| `traffic.log` | Traffic statistics, emitted by debug-level entries when `global.log.level=debug` |
+| `nat.log` | NAT/SNAT stats and routine operations, primarily emitted by debug-level entries when `global.log.level=debug` |
 
 Log files are automatically rotated using [lumberjack](https://github.com/natefinch/lumberjack) based on `max_size`, `max_backups`, `max_age`, and `compress` settings.
 
