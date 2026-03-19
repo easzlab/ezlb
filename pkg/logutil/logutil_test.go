@@ -26,9 +26,6 @@ func TestBuildLoggers_DefaultConfig(t *testing.T) {
 	if loggers.Traffic == nil {
 		t.Error("expected Traffic logger to be non-nil")
 	}
-	if loggers.NAT == nil {
-		t.Error("expected NAT logger to be non-nil")
-	}
 }
 
 func TestBuildLoggers_CreatesLogDir(t *testing.T) {
@@ -67,9 +64,6 @@ func TestBuildLoggers_FallbackOnBadHome(t *testing.T) {
 	}
 	if loggers.Traffic == nil {
 		t.Error("expected Traffic logger to be non-nil even with bad home")
-	}
-	if loggers.NAT == nil {
-		t.Error("expected NAT logger to be non-nil even with bad home")
 	}
 }
 
@@ -138,11 +132,10 @@ func TestBuildLoggers_CreatesLogFiles(t *testing.T) {
 	// Write a message to each logger to trigger file creation
 	loggers.System.Info("system test")
 	loggers.Traffic.Info("traffic test")
-	loggers.NAT.Info("nat test")
 	loggers.SyncAll()
 
 	// Verify log files were created
-	for _, name := range []string{"ezlb.log", "traffic.log", "nat.log"} {
+	for _, name := range []string{"ezlb.log", "traffic.log"} {
 		path := filepath.Join(dir, name)
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			t.Errorf("expected log file %q to exist", path)
@@ -150,8 +143,8 @@ func TestBuildLoggers_CreatesLogFiles(t *testing.T) {
 	}
 }
 
-func TestBuildLoggers_TrafficAndNATFollowGlobalLevel(t *testing.T) {
-	t.Run("info filters debug traffic and nat entries", func(t *testing.T) {
+func TestBuildLoggers_TrafficFollowsGlobalLevel(t *testing.T) {
+	t.Run("info filters debug traffic entries", func(t *testing.T) {
 		dir := t.TempDir()
 		cfg := config.LogConfig{
 			Level: "info",
@@ -164,14 +157,12 @@ func TestBuildLoggers_TrafficAndNATFollowGlobalLevel(t *testing.T) {
 		}
 
 		loggers.Traffic.Debug("traffic hidden at info")
-		loggers.NAT.Debug("nat hidden at info")
 		loggers.SyncAll()
 
 		assertLogFileMissingOrEmpty(t, filepath.Join(dir, "traffic.log"))
-		assertLogFileMissingOrEmpty(t, filepath.Join(dir, "nat.log"))
 	})
 
-	t.Run("debug writes debug traffic and nat entries", func(t *testing.T) {
+	t.Run("debug writes debug traffic entries", func(t *testing.T) {
 		dir := t.TempDir()
 		cfg := config.LogConfig{
 			Level: "debug",
@@ -184,11 +175,9 @@ func TestBuildLoggers_TrafficAndNATFollowGlobalLevel(t *testing.T) {
 		}
 
 		loggers.Traffic.Debug("traffic visible at debug")
-		loggers.NAT.Debug("nat visible at debug")
 		loggers.SyncAll()
 
 		assertLogFileContains(t, filepath.Join(dir, "traffic.log"), "traffic visible at debug")
-		assertLogFileContains(t, filepath.Join(dir, "nat.log"), "nat visible at debug")
 	})
 }
 

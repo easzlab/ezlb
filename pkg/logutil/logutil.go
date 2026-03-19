@@ -11,11 +11,10 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-// Loggers holds the three logger instances used throughout the application.
+// Loggers holds the logger instances used throughout the application.
 type Loggers struct {
 	System  *zap.Logger
 	Traffic *zap.Logger
-	NAT     *zap.Logger
 }
 
 // SyncAll calls Sync() on all loggers to flush any buffered log entries.
@@ -26,16 +25,12 @@ func (l *Loggers) SyncAll() {
 	if l.Traffic != nil {
 		_ = l.Traffic.Sync()
 	}
-	if l.NAT != nil {
-		_ = l.NAT.Sync()
-	}
 }
 
-// BuildLoggers creates system/traffic/nat loggers based on LogConfig.
+// BuildLoggers creates system and traffic loggers based on LogConfig.
 //
 // System logger outputs to stdout/stderr + ${home}/ezlb.log.
 // Traffic logger outputs to ${home}/traffic.log.
-// NAT logger outputs to ${home}/nat.log.
 //
 // On file creation failure, logs a warning to stderr and falls back to stdout/stderr only.
 func BuildLoggers(cfg config.LogConfig) (*Loggers, error) {
@@ -84,22 +79,9 @@ func BuildLoggers(cfg config.LogConfig) (*Loggers, error) {
 		trafficLogger = zap.New(zapcore.NewCore(jsonEncoder, zapcore.AddSync(os.Stdout), level))
 	}
 
-	// Build NAT logger: file only (fallback to stdout on error)
-	// NAT log call sites also use Debug() for routine operations/raw stats, and
-	// the global log level decides whether those debug entries are emitted.
-	var natLogger *zap.Logger
-	if dirErr == nil {
-		natFileWriter := newLumberjackWriter(filepath.Join(home, "nat.log"), cfg)
-		natLogger = zap.New(zapcore.NewCore(jsonEncoder, zapcore.AddSync(natFileWriter), level))
-	} else {
-		fmt.Fprintf(os.Stderr, "WARNING: failed to create log directory %q: %v, nat log will fallback to stdout\n", home, dirErr)
-		natLogger = zap.New(zapcore.NewCore(jsonEncoder, zapcore.AddSync(os.Stdout), level))
-	}
-
 	return &Loggers{
 		System:  systemLogger,
 		Traffic: trafficLogger,
-		NAT:     natLogger,
 	}, nil
 }
 

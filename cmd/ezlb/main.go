@@ -18,7 +18,7 @@ import (
 var (
 	BuildTime   string
 	BuildCommit string
-	Version     = "0.4.6"
+	Version     = "0.4.7"
 	configPath  string
 	showVersion bool
 )
@@ -109,8 +109,8 @@ func startDaemon(cmd *cobra.Command, args []string) error {
 		zap.String("home", logCfg.GetHome()),
 	)
 
-	// Phase 4: Create server with all three loggers
-	srv, err := server.NewServer(configPath, logger, loggers.Traffic, loggers.NAT)
+	// Phase 4: Create server
+	srv, err := server.NewServer(configPath, logger, loggers.Traffic)
 	if err != nil {
 		logger.Fatal("failed to create server", zap.Error(err))
 	}
@@ -157,7 +157,7 @@ func runOnce(cmd *cobra.Command, args []string) error {
 	defer loggers.SyncAll()
 
 	// Phase 4: Create server
-	srv, err := server.NewServer(configPath, loggers.System, loggers.Traffic, loggers.NAT)
+	srv, err := server.NewServer(configPath, loggers.System, loggers.Traffic)
 	if err != nil {
 		return fmt.Errorf("failed to create server: %w", err)
 	}

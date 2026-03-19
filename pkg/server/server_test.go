@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/easzlab/ezlb/pkg/config"
-	"github.com/easzlab/ezlb/pkg/snat"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
@@ -53,55 +52,6 @@ services:
 	}
 }
 
-func TestNewServerWithManagerUsesNATLoggerForSNATManager(t *testing.T) {
-	configYAML := `
-global:
-  log:
-    level: info
-services:
-  - name: web-service
-    listen: 10.0.0.1:80
-    protocol: tcp
-    scheduler: rr
-    health_check:
-      enabled: false
-    backends:
-      - address: 192.168.1.10:8080
-        weight: 1
-`
-	configPath := writeYAMLFile(t, t.TempDir(), configYAML)
-
-	systemCore, systemLogs := observer.New(zapcore.DebugLevel)
-	natCore, natLogs := observer.New(zapcore.DebugLevel)
-
-	srv, err := newServerWithManager(
-		configPath,
-		newTestLVSManager(t),
-		zap.New(systemCore),
-		zap.NewNop(),
-		zap.New(natCore),
-	)
-	if err != nil {
-		t.Fatalf("newServerWithManager failed: %v", err)
-	}
-	t.Cleanup(func() {
-		srv.shutdown()
-	})
-
-	if err := srv.snatMgr.Reconcile([]snat.SNATRule{
-		{BackendIP: "192.168.1.10", BackendPort: 8080, Protocol: "tcp", SnatIP: "10.0.0.1"},
-	}); err != nil {
-		t.Fatalf("snat reconcile failed: %v", err)
-	}
-
-	if natLogs.FilterMessage("fake: added SNAT rule").Len() != 1 {
-		t.Fatalf("expected SNAT manager log to be written via nat logger, got %d entries", natLogs.Len())
-	}
-	if systemLogs.FilterMessage("fake: added SNAT rule").Len() != 0 {
-		t.Fatal("expected SNAT manager log not to be written via system logger")
-	}
-}
-
 func TestRunOnceLogsKernelParameterMismatches(t *testing.T) {
 	configYAML := `
 global:
@@ -144,7 +94,7 @@ services:
 
 	core, logs := observer.New(zapcore.ErrorLevel)
 	lvsMgr := newTestLVSManager(t)
-	srv, err := newServerWithManager(configPath, lvsMgr, zap.New(core), zap.NewNop(), zap.NewNop())
+	srv, err := newServerWithManager(configPath, lvsMgr, zap.New(core), zap.NewNop())
 	if err != nil {
 		t.Fatalf("newServerWithManager failed: %v", err)
 	}

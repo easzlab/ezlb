@@ -9,16 +9,14 @@ import (
 	"go.uber.org/zap"
 )
 
-// Collector periodically collects IPVS and optional SNAT statistics
+// Collector periodically collects IPVS statistics
 // and writes raw cumulative data as debug-level traffic logs.
 // Traffic logging is disabled by default per service; only services with
 // traffic_log explicitly set to true will be logged.
 type Collector struct {
 	trafficCfg    config.TrafficLogConfig
 	lvsStats      LVSStatsProvider
-	snatStats     SNATStatsProvider
 	trafficLogger *zap.Logger
-	natLogger     *zap.Logger
 	systemLogger  *zap.Logger
 	stopCh        chan struct{}
 	stopped       chan struct{}
@@ -29,18 +27,14 @@ type Collector struct {
 // NewCollector creates a new traffic statistics collector.
 func NewCollector(
 	lvsStats LVSStatsProvider,
-	snatStats SNATStatsProvider,
 	trafficLogger *zap.Logger,
-	natLogger *zap.Logger,
 	systemLogger *zap.Logger,
 	services []config.ServiceConfig,
 	trafficCfg config.TrafficLogConfig,
 ) *Collector {
 	return &Collector{
 		lvsStats:      lvsStats,
-		snatStats:     snatStats,
 		trafficLogger: trafficLogger,
-		natLogger:     natLogger,
 		systemLogger:  systemLogger,
 		services:      services,
 		trafficCfg:    trafficCfg,
@@ -120,7 +114,6 @@ func (c *Collector) gatherSnapshot() *TrafficSnapshot {
 	snapshot := &TrafficSnapshot{
 		Services: make(map[string]ServiceTrafficStats),
 		Backends: make(map[string]BackendTrafficStats),
-		SNAT:     make(map[string]SNATRuleStats),
 	}
 
 	// Collect LVS service stats
@@ -137,20 +130,6 @@ func (c *Collector) gatherSnapshot() *TrafficSnapshot {
 		c.systemLogger.Warn("failed to collect IPVS backend stats", zap.Error(err))
 	} else {
 		snapshot.Backends = backendStats
-	}
-
-	// Collect SNAT stats (optional)
-	c.mu.RLock()
-	includeSNAT := c.trafficCfg.IsIncludeSNAT()
-	c.mu.RUnlock()
-
-	if includeSNAT && c.snatStats != nil {
-		snatStats, err := c.snatStats.Stats()
-		if err != nil {
-			c.systemLogger.Warn("failed to collect SNAT stats", zap.Error(err))
-		} else {
-			snapshot.SNAT = snatStats
-		}
 	}
 
 	return snapshot
@@ -231,15 +210,6 @@ func (c *Collector) logRawStats(snapshot *TrafficSnapshot) {
 		c.trafficLogger.Debug("traffic raw stats", fields...)
 	}
 
-	// Log SNAT raw stats
-	for key, stats := range snapshot.SNAT {
-		c.natLogger.Debug("snat raw stats",
-			zap.String("source", "snat"),
-			zap.String("rule_key", key),
-			zap.Uint64("packets", stats.Packets),
-			zap.Uint64("bytes", stats.Bytes),
-		)
-	}
 }
 
 type serviceConnectionCounts struct {

@@ -33,28 +33,14 @@ func (f *fakeLVSStatsProvider) BackendStats() (map[string]BackendTrafficStats, e
 	return f.backendStats, nil
 }
 
-// fakeSNATStatsProvider is a mock implementation of SNATStatsProvider for testing.
-type fakeSNATStatsProvider struct {
-	stats map[string]SNATRuleStats
-	err   error
-}
-
-func (f *fakeSNATStatsProvider) Stats() (map[string]SNATRuleStats, error) {
-	if f.err != nil {
-		return nil, f.err
-	}
-	return f.stats, nil
-}
-
 func boolPtr(b bool) *bool {
 	return &b
 }
 
-func newTestTrafficConfig(enabled bool, interval string, includeSNAT bool) config.TrafficLogConfig {
+func newTestTrafficConfig(enabled bool, interval string) config.TrafficLogConfig {
 	return config.TrafficLogConfig{
-		Enabled:     boolPtr(enabled),
-		Interval:    interval,
-		IncludeSNAT: boolPtr(includeSNAT),
+		Enabled:  boolPtr(enabled),
+		Interval: interval,
 	}
 }
 
@@ -82,9 +68,9 @@ func TestCollector_DefaultDisabled_NoLogs(t *testing.T) {
 	services := []config.ServiceConfig{
 		newTestServiceConfig("web", "10.0.0.1:80", "tcp", "rr", nil),
 	}
-	trafficCfg := newTestTrafficConfig(true, "15s", false)
+	trafficCfg := newTestTrafficConfig(true, "15s")
 
-	c := NewCollector(lvsProvider, nil, trafficLogger, zap.NewNop(), zap.NewNop(), services, trafficCfg)
+	c := NewCollector(lvsProvider, trafficLogger, zap.NewNop(), services, trafficCfg)
 	c.collect()
 
 	if logs.Len() != 0 {
@@ -133,9 +119,9 @@ func TestCollector_RawStatsLogging(t *testing.T) {
 	services := []config.ServiceConfig{
 		newTestServiceConfig("web", "10.0.0.1:80", "tcp", "rr", boolPtr(true)),
 	}
-	trafficCfg := newTestTrafficConfig(true, "15s", false)
+	trafficCfg := newTestTrafficConfig(true, "15s")
 
-	c := NewCollector(lvsProvider, nil, trafficLogger, zap.NewNop(), zap.NewNop(), services, trafficCfg)
+	c := NewCollector(lvsProvider, trafficLogger, zap.NewNop(), services, trafficCfg)
 	c.collect()
 
 	if logs.Len() != 3 {
@@ -201,9 +187,9 @@ func TestCollector_TrafficLogFalse(t *testing.T) {
 		newTestServiceConfig("api", "10.0.0.2:443", "tcp", "rr", boolPtr(false)), // disabled
 		newTestServiceConfig("dns", "10.0.0.3:53", "udp", "rr", nil),             // disabled (nil = default)
 	}
-	trafficCfg := newTestTrafficConfig(true, "15s", false)
+	trafficCfg := newTestTrafficConfig(true, "15s")
 
-	c := NewCollector(lvsProvider, nil, trafficLogger, zap.NewNop(), zap.NewNop(), services, trafficCfg)
+	c := NewCollector(lvsProvider, trafficLogger, zap.NewNop(), services, trafficCfg)
 	c.collect()
 
 	// Only "web" (true) should produce logs; "api" (false) and "dns" (nil) should not
@@ -231,9 +217,9 @@ func TestCollector_TrafficLogExplicitFalse(t *testing.T) {
 	services := []config.ServiceConfig{
 		newTestServiceConfig("web", "10.0.0.1:80", "tcp", "rr", boolPtr(false)),
 	}
-	trafficCfg := newTestTrafficConfig(true, "15s", false)
+	trafficCfg := newTestTrafficConfig(true, "15s")
 
-	c := NewCollector(lvsProvider, nil, trafficLogger, zap.NewNop(), zap.NewNop(), services, trafficCfg)
+	c := NewCollector(lvsProvider, trafficLogger, zap.NewNop(), services, trafficCfg)
 	c.collect()
 
 	if logs.Len() != 0 {
@@ -241,84 +227,8 @@ func TestCollector_TrafficLogExplicitFalse(t *testing.T) {
 	}
 }
 
-func TestCollector_SNATStatsDisabled(t *testing.T) {
-	core, logs := observer.New(zapcore.DebugLevel)
-	natLogger := zap.New(core)
 
-	snatProvider := &fakeSNATStatsProvider{
-		stats: map[string]SNATRuleStats{
-			"192.168.1.1:8080/tcp": {Packets: 100, Bytes: 50000},
-		},
-	}
 
-	lvsProvider := &fakeLVSStatsProvider{
-		serviceStats: make(map[string]ServiceTrafficStats),
-	}
-
-	services := []config.ServiceConfig{}
-	trafficCfg := newTestTrafficConfig(true, "15s", false) // include_snat = false
-
-	c := NewCollector(lvsProvider, snatProvider, zap.NewNop(), natLogger, zap.NewNop(), services, trafficCfg)
-	c.collect()
-
-	if logs.Len() != 0 {
-		t.Errorf("expected 0 SNAT log entries when include_snat=false, got %d", logs.Len())
-	}
-}
-
-func TestCollector_SNATRawStatsEnabled(t *testing.T) {
-	core, logs := observer.New(zapcore.DebugLevel)
-	natLogger := zap.New(core)
-
-	snatProvider := &fakeSNATStatsProvider{
-		stats: map[string]SNATRuleStats{
-			"192.168.1.1:8080/tcp": {Packets: 100, Bytes: 50000},
-		},
-	}
-
-	lvsProvider := &fakeLVSStatsProvider{
-		serviceStats: make(map[string]ServiceTrafficStats),
-		backendStats: make(map[string]BackendTrafficStats),
-	}
-
-	services := []config.ServiceConfig{}
-	trafficCfg := newTestTrafficConfig(true, "15s", true) // include_snat = true
-
-	c := NewCollector(lvsProvider, snatProvider, zap.NewNop(), natLogger, zap.NewNop(), services, trafficCfg)
-	c.collect()
-
-	if logs.Len() != 1 {
-		t.Fatalf("expected 1 SNAT log entry, got %d", logs.Len())
-	}
-
-	snatLog := logs.All()[0]
-	if snatLog.Message != "snat raw stats" {
-		t.Errorf("expected message 'snat raw stats', got %q", snatLog.Message)
-	}
-	if snatLog.Level != zapcore.DebugLevel {
-		t.Errorf("expected debug level, got %v", snatLog.Level)
-	}
-	fields := snatLog.ContextMap()
-	if fields["packets"] != uint64(100) {
-		t.Errorf("expected packets=100, got %v (type %T)", fields["packets"], fields["packets"])
-	}
-	if fields["bytes"] != uint64(50000) {
-		t.Errorf("expected bytes=50000, got %v (type %T)", fields["bytes"], fields["bytes"])
-	}
-}
-
-func TestCollector_SNATStatsNilProvider(t *testing.T) {
-	lvsProvider := &fakeLVSStatsProvider{
-		serviceStats: make(map[string]ServiceTrafficStats),
-	}
-
-	services := []config.ServiceConfig{}
-	trafficCfg := newTestTrafficConfig(true, "15s", true) // include_snat = true, but provider is nil
-
-	// Should not panic with nil snatStats
-	c := NewCollector(lvsProvider, nil, zap.NewNop(), zap.NewNop(), zap.NewNop(), services, trafficCfg)
-	c.collect()
-}
 
 func TestCollector_UpdateConfig(t *testing.T) {
 	lvsProvider := &fakeLVSStatsProvider{
@@ -330,16 +240,16 @@ func TestCollector_UpdateConfig(t *testing.T) {
 	services := []config.ServiceConfig{
 		newTestServiceConfig("web", "10.0.0.1:80", "tcp", "rr", nil),
 	}
-	trafficCfg := newTestTrafficConfig(true, "15s", false)
+	trafficCfg := newTestTrafficConfig(true, "15s")
 
-	c := NewCollector(lvsProvider, nil, zap.NewNop(), zap.NewNop(), zap.NewNop(), services, trafficCfg)
+	c := NewCollector(lvsProvider, zap.NewNop(), zap.NewNop(), services, trafficCfg)
 
 	// Update config
 	newServices := []config.ServiceConfig{
 		newTestServiceConfig("web", "10.0.0.1:80", "tcp", "rr", boolPtr(true)),
 		newTestServiceConfig("api", "10.0.0.2:443", "tcp", "wrr", nil),
 	}
-	newTrafficCfg := newTestTrafficConfig(true, "30s", true)
+	newTrafficCfg := newTestTrafficConfig(true, "30s")
 
 	c.UpdateConfig(newServices, newTrafficCfg)
 
@@ -353,9 +263,6 @@ func TestCollector_UpdateConfig(t *testing.T) {
 	if c.trafficCfg.GetInterval() != 30*time.Second {
 		t.Errorf("expected interval 30s after update, got %v", c.trafficCfg.GetInterval())
 	}
-	if !c.trafficCfg.IsIncludeSNAT() {
-		t.Error("expected include_snat=true after update")
-	}
 }
 
 func TestCollector_StartStop(t *testing.T) {
@@ -364,9 +271,9 @@ func TestCollector_StartStop(t *testing.T) {
 	}
 
 	services := []config.ServiceConfig{}
-	trafficCfg := newTestTrafficConfig(true, "5s", false)
+	trafficCfg := newTestTrafficConfig(true, "5s")
 
-	c := NewCollector(lvsProvider, nil, zap.NewNop(), zap.NewNop(), zap.NewNop(), services, trafficCfg)
+	c := NewCollector(lvsProvider, zap.NewNop(), zap.NewNop(), services, trafficCfg)
 
 	// Start and stop should not panic
 	c.Start()
@@ -449,9 +356,9 @@ func TestCollector_StatsProviderError(t *testing.T) {
 	}
 
 	services := []config.ServiceConfig{}
-	trafficCfg := newTestTrafficConfig(true, "15s", false)
+	trafficCfg := newTestTrafficConfig(true, "15s")
 
-	c := NewCollector(lvsProvider, nil, trafficLogger, zap.NewNop(), systemLogger, services, trafficCfg)
+	c := NewCollector(lvsProvider, trafficLogger, systemLogger, services, trafficCfg)
 
 	// Should not panic, should log warning
 	c.collect()
@@ -479,9 +386,9 @@ func TestCollector_ServiceConfigRemoved_NoLog(t *testing.T) {
 
 	// No matching service config — simulates a removed service
 	services := []config.ServiceConfig{}
-	trafficCfg := newTestTrafficConfig(true, "15s", false)
+	trafficCfg := newTestTrafficConfig(true, "15s")
 
-	c := NewCollector(lvsProvider, nil, trafficLogger, zap.NewNop(), zap.NewNop(), services, trafficCfg)
+	c := NewCollector(lvsProvider, trafficLogger, zap.NewNop(), services, trafficCfg)
 	c.collect()
 
 	// Service config not found, should skip (not log)

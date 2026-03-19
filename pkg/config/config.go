@@ -81,9 +81,8 @@ func (l LogConfig) GetMaxAge() int {
 
 // TrafficLogConfig holds traffic logging specific configuration.
 type TrafficLogConfig struct {
-	Enabled     *bool  `yaml:"enabled"      mapstructure:"enabled"`
-	IncludeSNAT *bool  `yaml:"include_snat" mapstructure:"include_snat"`
-	Interval    string `yaml:"interval"     mapstructure:"interval"`
+	Enabled  *bool  `yaml:"enabled"  mapstructure:"enabled"`
+	Interval string `yaml:"interval" mapstructure:"interval"`
 }
 
 // IsEnabled returns whether traffic logging is enabled. Defaults to true.
@@ -108,14 +107,6 @@ func (t TrafficLogConfig) GetInterval() time.Duration {
 		return 5 * time.Second
 	}
 	return duration
-}
-
-// IsIncludeSNAT returns whether to include SNAT statistics in traffic logs. Defaults to true.
-func (t TrafficLogConfig) IsIncludeSNAT() bool {
-	if t.IncludeSNAT == nil {
-		return true
-	}
-	return *t.IncludeSNAT
 }
 
 // IsCleanupOnExit returns whether to clean up IPVS and iptables rules on exit.
@@ -278,7 +269,6 @@ func NewManager(configPath string, logger *zap.Logger) (*Manager, error) {
 	viperInstance.SetDefault("global.log.compress", false)
 	viperInstance.SetDefault("global.log.traffic.enabled", true)
 	viperInstance.SetDefault("global.log.traffic.interval", "15s")
-	viperInstance.SetDefault("global.log.traffic.include_snat", true)
 	viperInstance.SetDefault("global.cleanup_on_exit", true)
 
 	manager := &Manager{

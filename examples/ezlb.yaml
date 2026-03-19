@@ -8,8 +8,7 @@ global:
     compress: false          # Compress rotated log files (default: false)
     traffic:
       enabled: true          # Enable traffic collector (default: true)
-      interval: 15s          # Traffic stats collection interval, min 5s (default: 15s)
-      include_snat: true     # Include SNAT stats in traffic logs (default: true)
+      interval: 20s          # Traffic stats collection interval, min 5s (default: 20s)
       # Note: Traffic logging is disabled by default per service.
       # Set traffic_log: true on each service to enable.
   cleanup_on_exit: true      # Remove managed IPVS services and EZLB-SNAT iptables chain on exit (default: true)

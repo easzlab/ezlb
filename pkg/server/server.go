@@ -21,24 +21,23 @@ type Server struct {
 	snatMgr       snat.Manager
 	logger        *zap.Logger
 	trafficLogger *zap.Logger
-	natLogger     *zap.Logger
 	collector     *trafficlog.Collector
 }
 
 // NewServer initializes all modules and returns a ready-to-run Server.
-func NewServer(configPath string, logger *zap.Logger, trafficLogger *zap.Logger, natLogger *zap.Logger) (*Server, error) {
+func NewServer(configPath string, logger *zap.Logger, trafficLogger *zap.Logger) (*Server, error) {
 	// Initialize IPVS manager
 	lvsMgr, err := lvs.NewManager(logger.Named("lvs"))
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize IPVS manager: %w", err)
 	}
 
-	return newServerWithManager(configPath, lvsMgr, logger, trafficLogger, natLogger)
+	return newServerWithManager(configPath, lvsMgr, logger, trafficLogger)
 }
 
 // newServerWithManager initializes a Server with a pre-created LVS Manager.
 // This allows tests to inject a platform-appropriate Manager instance.
-func newServerWithManager(configPath string, lvsMgr *lvs.Manager, logger *zap.Logger, trafficLogger *zap.Logger, natLogger *zap.Logger) (*Server, error) {
+func newServerWithManager(configPath string, lvsMgr *lvs.Manager, logger *zap.Logger, trafficLogger *zap.Logger) (*Server, error) {
 	// Initialize config manager
 	configMgr, err := config.NewManager(configPath, logger.Named("config"))
 	if err != nil {
@@ -46,11 +45,7 @@ func newServerWithManager(configPath string, lvsMgr *lvs.Manager, logger *zap.Lo
 	}
 
 	// Initialize SNAT manager
-	snatManagerLogger := natLogger
-	if snatManagerLogger == nil {
-		snatManagerLogger = logger
-	}
-	snatMgr, err := snat.NewManager(snatManagerLogger.Named("snat"))
+	snatMgr, err := snat.NewManager(logger.Named("snat"))
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize SNAT manager: %w", err)
 	}
@@ -61,7 +56,6 @@ func newServerWithManager(configPath string, lvsMgr *lvs.Manager, logger *zap.Lo
 		snatMgr:       snatMgr,
 		logger:        logger,
 		trafficLogger: trafficLogger,
-		natLogger:     natLogger,
 	}
 
 	// Initialize health check manager with onChange callback that triggers reconcile
@@ -153,16 +147,9 @@ func (s *Server) syncTrafficCollector(cfg *config.Config) {
 
 		lvsStats := trafficlog.NewLVSStatsAdapter(s.lvsMgr)
 
-		var snatStats trafficlog.SNATStatsProvider
-		if sp, ok := s.snatMgr.(snat.StatsProvider); ok {
-			snatStats = &snatStatsAdapter{provider: sp}
-		}
-
 		s.collector = trafficlog.NewCollector(
 			lvsStats,
-			snatStats,
 			s.trafficLogger,
-			s.natLogger,
 			s.logger,
 			cfg.Services,
 			cfg.Global.Log.Traffic,
@@ -170,7 +157,6 @@ func (s *Server) syncTrafficCollector(cfg *config.Config) {
 		s.collector.Start()
 		s.logger.Info("traffic collector started",
 			zap.Duration("interval", cfg.Global.Log.Traffic.GetInterval()),
-			zap.Bool("include_snat", cfg.Global.Log.Traffic.IsIncludeSNAT()),
 		)
 		return
 	}
@@ -202,22 +188,3 @@ func (s *Server) shutdown() {
 	s.logger.Info("server stopped")
 }
 
-// snatStatsAdapter adapts snat.StatsProvider to trafficlog.SNATStatsProvider.
-type snatStatsAdapter struct {
-	provider snat.StatsProvider
-}
-
-func (a *snatStatsAdapter) Stats() (map[string]trafficlog.SNATRuleStats, error) {
-	raw, err := a.provider.Stats()
-	if err != nil {
-		return nil, err
-	}
-	result := make(map[string]trafficlog.SNATRuleStats, len(raw))
-	for k, v := range raw {
-		result[k] = trafficlog.SNATRuleStats{
-			Packets: v.Packets,
-			Bytes:   v.Bytes,
-		}
-	}
-	return result, nil
-}

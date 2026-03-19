@@ -785,20 +785,6 @@ func TestTrafficLogConfig_GetInterval_Valid(t *testing.T) {
 	}
 }
 
-func TestTrafficLogConfig_IsIncludeSNAT_Default(t *testing.T) {
-	tc := TrafficLogConfig{}
-	if !tc.IsIncludeSNAT() {
-		t.Error("expected IsIncludeSNAT to return true when IncludeSNAT is nil")
-	}
-}
-
-func TestTrafficLogConfig_IsIncludeSNAT_False(t *testing.T) {
-	tc := TrafficLogConfig{IncludeSNAT: boolPtr(false)}
-	if tc.IsIncludeSNAT() {
-		t.Error("expected IsIncludeSNAT to return false when IncludeSNAT is false")
-	}
-}
-
 // --- Validate log-related tests ---
 
 func TestValidate_LogLevelInvalid(t *testing.T) {
