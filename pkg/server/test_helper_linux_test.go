@@ -36,7 +36,7 @@ func newTestServer(t *testing.T, configPath string) *Server {
 		}
 	})
 
-	srv, err := newServerWithManager(configPath, lvsMgr, logger, zap.NewNop(), zap.NewNop())
+	srv, err := newServerWithManager(configPath, lvsMgr, logger, zap.NewNop())
 	if err != nil {
 		t.Fatalf("newServerWithManager failed: %v", err)
 	}

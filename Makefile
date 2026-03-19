@@ -79,11 +79,11 @@ test-e2e: ## run end-to-end tests for Linux
 	@go test -count=1 -v -p 1 -tags integration ./tests/e2e/
 	@echo "✓ Tests completed"
 
-.PHONY: test-e2e-docker
-test-e2e-docker: ## run e2e tests inside a Docker container
-	@echo "Running containerized e2e tests..."
+.PHONY: test-docker
+test-docker: ## run tests inside a Docker container
+	@echo "Running containerized tests for macOS/Linux..."
 	@bash tests/e2e/run-e2e-container.sh
-	@echo "✓ Containerized e2e tests completed"
+	@echo "✓ Containerized tests completed"
 
 .PHONY: clean
 clean: ## clean build artifacts

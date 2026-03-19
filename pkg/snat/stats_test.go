@@ -24,17 +24,18 @@ func TestSNATRuleStats_Values(t *testing.T) {
 	}
 }
 
-func TestStatsProvider_TypeAssertion_FakeManager(t *testing.T) {
-	// FakeManager does NOT implement StatsProvider.
-	// This test verifies the type assertion pattern used by the collector.
-	mgr, err := NewManager(nil)
-	if err != nil {
-		t.Fatalf("failed to create FakeManager: %v", err)
-	}
+func TestStatsProvider_TypeAssertion_NonProvider(t *testing.T) {
+	// Verify the type assertion pattern used by the collector:
+	// a Manager that does NOT implement StatsProvider should yield ok=false.
+	// We use a local stub so this test compiles on all platforms — on Linux,
+	// NewManager returns linuxManager which intentionally implements StatsProvider,
+	// and FakeManager is only compiled under !integration.
+	type noStatsManager struct{ Manager }
+	var mgr Manager = &noStatsManager{}
 
 	_, ok := mgr.(StatsProvider)
 	if ok {
-		t.Error("FakeManager should NOT implement StatsProvider")
+		t.Error("manager without Stats() should NOT implement StatsProvider")
 	}
 }
 
