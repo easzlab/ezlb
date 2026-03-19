@@ -98,11 +98,13 @@ func TestLVSStatsAdapter_BackendStats(t *testing.T) {
 	}
 
 	dst := &lvs.Destination{
-		Address:         net.ParseIP("192.168.1.1").To4(),
-		Port:            8080,
-		Weight:          1,
-		ConnectionFlags: lvs.ConnectionFlagMasq,
-		AddressFamily:   syscall.AF_INET,
+		Address:             net.ParseIP("192.168.1.1").To4(),
+		Port:                8080,
+		Weight:              1,
+		ConnectionFlags:     lvs.ConnectionFlagMasq,
+		AddressFamily:       syscall.AF_INET,
+		ActiveConnections:   7,
+		InactiveConnections: 3,
 		Stats: lvs.DstStats{
 			Connections: 50,
 			PacketsIn:   100,
@@ -140,6 +142,15 @@ func TestLVSStatsAdapter_BackendStats(t *testing.T) {
 	}
 	if backendStats.Connections != 50 {
 		t.Errorf("expected Connections=50, got %d", backendStats.Connections)
+	}
+	if backendStats.ActiveConnections != 7 {
+		t.Errorf("expected ActiveConnections=7, got %d", backendStats.ActiveConnections)
+	}
+	if backendStats.InactiveConnections != 3 {
+		t.Errorf("expected InactiveConnections=3, got %d", backendStats.InactiveConnections)
+	}
+	if backendStats.CurrentConnections != 10 {
+		t.Errorf("expected CurrentConnections=10, got %d", backendStats.CurrentConnections)
 	}
 	if backendStats.InPkts != 100 {
 		t.Errorf("expected InPkts=100, got %d", backendStats.InPkts)

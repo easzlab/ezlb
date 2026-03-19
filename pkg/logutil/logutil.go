@@ -50,13 +50,13 @@ func BuildLoggers(cfg config.LogConfig) (*Loggers, error) {
 	// Encoder configs
 	consoleEncoderCfg := zap.NewProductionEncoderConfig()
 	consoleEncoderCfg.TimeKey = "time"
-	consoleEncoderCfg.EncodeTime = zapcore.ISO8601TimeEncoder
+	consoleEncoderCfg.EncodeTime = zapcore.TimeEncoderOfLayout("2006-01-02 15:04:05.000")
 	consoleEncoderCfg.EncodeLevel = zapcore.CapitalColorLevelEncoder
 	consoleEncoder := zapcore.NewConsoleEncoder(consoleEncoderCfg)
 
 	jsonEncoderCfg := zap.NewProductionEncoderConfig()
 	jsonEncoderCfg.TimeKey = "time"
-	jsonEncoderCfg.EncodeTime = zapcore.ISO8601TimeEncoder
+	jsonEncoderCfg.EncodeTime = zapcore.TimeEncoderOfLayout("2006-01-02 15:04:05.000")
 	jsonEncoder := zapcore.NewJSONEncoder(jsonEncoderCfg)
 
 	// Build system logger: stdout + file
@@ -107,7 +107,7 @@ func BuildLoggers(cfg config.LogConfig) (*Loggers, error) {
 func NewBootstrapLogger() *zap.Logger {
 	encoderConfig := zap.NewProductionEncoderConfig()
 	encoderConfig.TimeKey = "time"
-	encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+	encoderConfig.EncodeTime = zapcore.TimeEncoderOfLayout("2006-01-02 15:04:05.000")
 	encoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
 
 	core := zapcore.NewCore(

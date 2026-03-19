@@ -59,15 +59,27 @@ func (a *lvsStatsAdapter) BackendStats() (map[string]BackendTrafficStats, error)
 		for _, dst := range dests {
 			dstKey := lvs.DestinationKeyFromIPVS(dst).String()
 			fullKey := fmt.Sprintf("%s->%s", svcKey, dstKey)
+			activeConnections := connectionCountUint64(dst.ActiveConnections)
+			inactiveConnections := connectionCountUint64(dst.InactiveConnections)
 			result[fullKey] = BackendTrafficStats{
-				ServiceKey:  svcKey,
-				Connections: uint64(dst.Stats.Connections),
-				InPkts:      uint64(dst.Stats.PacketsIn),
-				OutPkts:     uint64(dst.Stats.PacketsOut),
-				InBytes:     dst.Stats.BytesIn,
-				OutBytes:    dst.Stats.BytesOut,
+				ServiceKey:          svcKey,
+				Connections:         uint64(dst.Stats.Connections),
+				ActiveConnections:   activeConnections,
+				InactiveConnections: inactiveConnections,
+				CurrentConnections:  activeConnections + inactiveConnections,
+				InPkts:              uint64(dst.Stats.PacketsIn),
+				OutPkts:             uint64(dst.Stats.PacketsOut),
+				InBytes:             dst.Stats.BytesIn,
+				OutBytes:            dst.Stats.BytesOut,
 			}
 		}
 	}
 	return result, nil
+}
+
+func connectionCountUint64(n int) uint64 {
+	if n < 0 {
+		return 0
+	}
+	return uint64(n)
 }

@@ -165,6 +165,7 @@ func (c *Collector) logRawStats(snapshot *TrafficSnapshot) {
 
 	// Build service key -> config lookup
 	svcConfigMap := buildServiceConfigMap(services)
+	serviceConnectionCounts := aggregateServiceConnectionCounts(snapshot.Backends)
 
 	// Log service-level raw stats
 	for key, stats := range snapshot.Services {
@@ -188,6 +189,13 @@ func (c *Collector) logRawStats(snapshot *TrafficSnapshot) {
 			zap.Uint64("packets_in", stats.InPkts),
 			zap.Uint64("packets_out", stats.OutPkts),
 		)
+		if counts, ok := serviceConnectionCounts[key]; ok {
+			fields = append(fields,
+				zap.Uint64("active_connections", counts.ActiveConnections),
+				zap.Uint64("inactive_connections", counts.InactiveConnections),
+				zap.Uint64("current_connections", counts.CurrentConnections),
+			)
+		}
 		c.trafficLogger.Debug("traffic raw stats", fields...)
 	}
 
@@ -202,6 +210,11 @@ func (c *Collector) logRawStats(snapshot *TrafficSnapshot) {
 			continue
 		}
 
+		currentConnections := stats.CurrentConnections
+		if currentConnections == 0 {
+			currentConnections = stats.ActiveConnections + stats.InactiveConnections
+		}
+
 		fields := append(logutil.ServiceFields(svcCfg),
 			zap.String("source", "ipvs"),
 			zap.String("type", "backend"),
@@ -211,6 +224,9 @@ func (c *Collector) logRawStats(snapshot *TrafficSnapshot) {
 			zap.Uint64("bytes_out", stats.OutBytes),
 			zap.Uint64("packets_in", stats.InPkts),
 			zap.Uint64("packets_out", stats.OutPkts),
+			zap.Uint64("active_connections", stats.ActiveConnections),
+			zap.Uint64("inactive_connections", stats.InactiveConnections),
+			zap.Uint64("current_connections", currentConnections),
 		)
 		c.trafficLogger.Debug("traffic raw stats", fields...)
 	}
@@ -224,6 +240,31 @@ func (c *Collector) logRawStats(snapshot *TrafficSnapshot) {
 			zap.Uint64("bytes", stats.Bytes),
 		)
 	}
+}
+
+type serviceConnectionCounts struct {
+	ActiveConnections   uint64
+	InactiveConnections uint64
+	CurrentConnections  uint64
+}
+
+func aggregateServiceConnectionCounts(backends map[string]BackendTrafficStats) map[string]serviceConnectionCounts {
+	result := make(map[string]serviceConnectionCounts)
+	for _, stats := range backends {
+		counts := result[stats.ServiceKey]
+		counts.ActiveConnections += stats.ActiveConnections
+		counts.InactiveConnections += stats.InactiveConnections
+		counts.CurrentConnections += backendCurrentConnections(stats)
+		result[stats.ServiceKey] = counts
+	}
+	return result
+}
+
+func backendCurrentConnections(stats BackendTrafficStats) uint64 {
+	if stats.CurrentConnections != 0 {
+		return stats.CurrentConnections
+	}
+	return stats.ActiveConnections + stats.InactiveConnections
 }
 
 // buildServiceConfigMap builds a lookup map from service key (listen/protocol format)

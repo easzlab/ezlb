@@ -103,6 +103,30 @@ func TestCollector_RawStatsLogging(t *testing.T) {
 		serviceStats: map[string]ServiceTrafficStats{
 			"10.0.0.1:80/tcp": {Connections: 100, InPkts: 200, OutPkts: 150, InBytes: 50000, OutBytes: 30000},
 		},
+		backendStats: map[string]BackendTrafficStats{
+			"10.0.0.1:80/tcp->192.168.1.1:8080": {
+				ServiceKey:          "10.0.0.1:80/tcp",
+				Connections:         60,
+				ActiveConnections:   5,
+				InactiveConnections: 2,
+				CurrentConnections:  7,
+				InPkts:              120,
+				OutPkts:             90,
+				InBytes:             28000,
+				OutBytes:            17000,
+			},
+			"10.0.0.1:80/tcp->192.168.1.2:8080": {
+				ServiceKey:          "10.0.0.1:80/tcp",
+				Connections:         40,
+				ActiveConnections:   3,
+				InactiveConnections: 1,
+				CurrentConnections:  4,
+				InPkts:              80,
+				OutPkts:             60,
+				InBytes:             22000,
+				OutBytes:            13000,
+			},
+		},
 	}
 
 	// Enable traffic logging
@@ -114,15 +138,49 @@ func TestCollector_RawStatsLogging(t *testing.T) {
 	c := NewCollector(lvsProvider, nil, trafficLogger, zap.NewNop(), zap.NewNop(), services, trafficCfg)
 	c.collect()
 
-	// Only "web" (true) should produce logs; "api" (false) and "dns" (nil) should not
-	if logs.Len() != 1 {
-		t.Fatalf("expected 1 log entry (only web), got %d", logs.Len())
+	if logs.Len() != 3 {
+		t.Fatalf("expected 3 log entries (1 service + 2 backends), got %d", logs.Len())
 	}
 
-	entry := logs.All()[0]
-	fields := entry.ContextMap()
-	if fields["service"] != "web" {
-		t.Errorf("expected service='web', got %v", fields["service"])
+	var serviceLogFields map[string]interface{}
+	backendLogCount := 0
+	for _, entry := range logs.All() {
+		fields := entry.ContextMap()
+		if fields["service"] != "web" {
+			t.Errorf("expected service='web', got %v", fields["service"])
+		}
+
+		switch fields["type"] {
+		case "service":
+			serviceLogFields = fields
+		case "backend":
+			backendLogCount++
+			if _, ok := fields["current_connections"]; !ok {
+				t.Errorf("expected backend log to include current_connections, got %v", fields)
+			}
+			if _, ok := fields["active_connections"]; !ok {
+				t.Errorf("expected backend log to include active_connections, got %v", fields)
+			}
+			if _, ok := fields["inactive_connections"]; !ok {
+				t.Errorf("expected backend log to include inactive_connections, got %v", fields)
+			}
+		}
+	}
+
+	if backendLogCount != 2 {
+		t.Fatalf("expected 2 backend log entries, got %d", backendLogCount)
+	}
+	if serviceLogFields == nil {
+		t.Fatal("expected service log entry")
+	}
+	if serviceLogFields["current_connections"] != uint64(11) {
+		t.Errorf("expected service current_connections=11, got %v", serviceLogFields["current_connections"])
+	}
+	if serviceLogFields["active_connections"] != uint64(8) {
+		t.Errorf("expected service active_connections=8, got %v", serviceLogFields["active_connections"])
+	}
+	if serviceLogFields["inactive_connections"] != uint64(3) {
+		t.Errorf("expected service inactive_connections=3, got %v", serviceLogFields["inactive_connections"])
 	}
 }
 

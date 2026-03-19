@@ -9,14 +9,17 @@ type ServiceTrafficStats struct {
 	OutBytes    uint64
 }
 
-// BackendTrafficStats holds cumulative IPVS backend-level statistics.
+// BackendTrafficStats holds IPVS backend-level traffic and current connection statistics.
 type BackendTrafficStats struct {
-	ServiceKey  string
-	Connections uint64
-	InPkts      uint64
-	OutPkts     uint64
-	InBytes     uint64
-	OutBytes    uint64
+	ServiceKey          string
+	Connections         uint64
+	ActiveConnections   uint64
+	InactiveConnections uint64
+	CurrentConnections  uint64
+	InPkts              uint64
+	OutPkts             uint64
+	InBytes             uint64
+	OutBytes            uint64
 }
 
 // SNATRuleStats holds cumulative SNAT rule statistics.
