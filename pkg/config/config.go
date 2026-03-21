@@ -19,8 +19,11 @@ type Config struct {
 
 // GlobalConfig holds global settings.
 type GlobalConfig struct {
-	CleanupOnExit *bool     `yaml:"cleanup_on_exit" mapstructure:"cleanup_on_exit"`
-	Log           LogConfig `yaml:"log"            mapstructure:"log"`
+	CleanupOnExit  *bool     `yaml:"cleanup_on_exit" mapstructure:"cleanup_on_exit"`
+	MetricsEnabled *bool     `yaml:"metrics_enabled" mapstructure:"metrics_enabled"`
+	AdminAddress   string    `yaml:"admin_address"   mapstructure:"admin_address"`
+	MetricsPath    string    `yaml:"metrics_path"    mapstructure:"metrics_path"`
+	Log            LogConfig `yaml:"log"            mapstructure:"log"`
 }
 
 // LogConfig holds unified logging configuration.
@@ -116,6 +119,24 @@ func (g GlobalConfig) IsCleanupOnExit() bool {
 		return true
 	}
 	return *g.CleanupOnExit
+}
+
+// IsMetricsEnabled returns whether metrics are enabled.
+// Defaults to true if not explicitly set.
+func (g GlobalConfig) IsMetricsEnabled() bool {
+	if g.MetricsEnabled == nil {
+		return true
+	}
+	return *g.MetricsEnabled
+}
+
+// GetMetricsPath returns the metrics endpoint path.
+// Defaults to "/metrics" if not set.
+func (g GlobalConfig) GetMetricsPath() string {
+	if g.MetricsPath == "" {
+		return "/metrics"
+	}
+	return g.MetricsPath
 }
 
 // ServiceConfig defines a virtual service with its backends and health check settings.
@@ -250,6 +271,7 @@ type Manager struct {
 	viper      *viper.Viper
 	current    *Config
 	onChange   chan struct{}
+	onReload   func()
 	logger     *zap.Logger
 	configPath string
 	mu         sync.RWMutex
@@ -270,6 +292,8 @@ func NewManager(configPath string, logger *zap.Logger) (*Manager, error) {
 	viperInstance.SetDefault("global.log.traffic.enabled", true)
 	viperInstance.SetDefault("global.log.traffic.interval", "15s")
 	viperInstance.SetDefault("global.cleanup_on_exit", true)
+	viperInstance.SetDefault("global.metrics_enabled", true)
+	viperInstance.SetDefault("global.metrics_path", "/metrics")
 
 	manager := &Manager{
 		viper:      viperInstance,
@@ -467,6 +491,11 @@ func (m *Manager) WatchConfig() {
 
 		m.logger.Info("config reloaded successfully")
 
+		// Increment config reload counter via callback if registered
+		if m.onReload != nil {
+			m.onReload()
+		}
+
 		// Non-blocking send to notify listeners
 		select {
 		case m.onChange <- struct{}{}:
@@ -487,4 +516,11 @@ func (m *Manager) GetConfig() *Config {
 // OnChange returns a read-only channel that signals when config has changed.
 func (m *Manager) OnChange() <-chan struct{} {
 	return m.onChange
+}
+
+// SetOnReloadCallback sets a callback function to be called when config is reloaded.
+func (m *Manager) SetOnReloadCallback(fn func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onReload = fn
 }

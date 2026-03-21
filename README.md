@@ -12,6 +12,7 @@ A lightweight Layer-4 TCP/UDP load balancer based on Linux IPVS, using declarati
 - **TCP & HTTP Health Checks**: Independent health check configuration per service, supporting TCP connection probes and HTTP GET probes with configurable path and expected status code
 - **FullNAT / SNAT Support**: Optional per-service FullNAT mode via IPVS NAT + iptables SNAT/MASQUERADE, with automatic nftables compatibility on iptables-nft backends
 - **Hot Config Reload**: File changes automatically trigger reconciliation without restart
+- **Prometheus Metrics**: Built-in metrics endpoint for monitoring traffic stats, health status, and reconcile errors
 
 ## Quick Start
 
@@ -29,71 +30,7 @@ make build-linux
 
 ### Configuration
 
-Create a config file `config.yaml`:
-
-```yaml
-global:
-  log:
-    level: info              # Global log level; traffic/nat debug logs are written only when set to debug
-    home: ./logs             # Log directory (default: ./logs)
-    max_size: 50             # Max size per log file in MB (default: 50)
-    max_backups: 3           # Max number of old log files to retain (default: 3)
-    traffic:
-      enabled: true          # Enable traffic logging (default: true)
-      interval: 15s          # Traffic stats collection interval, min 5s (default: 15s)
-  cleanup_on_exit: true      # Remove managed IPVS services and EZLB-SNAT iptables chain on exit (default: true)
-
-services:
-  - name: web-service
-    listen: 10.0.0.1:80
-    protocol: tcp
-    scheduler: wrr
-    health_check:
-      enabled: true
-      type: tcp              # optional: tcp (default), http
-      interval: 5s
-      timeout: 3s
-      fail_count: 3
-      rise_count: 2
-    backends:
-      - address: 192.168.1.10:8080
-        weight: 5
-      - address: 192.168.1.11:8080
-        weight: 3
-
-  - name: api-service
-    listen: 10.0.0.1:443
-    protocol: tcp
-    scheduler: wlc
-    health_check:
-      enabled: true
-      type: http             # HTTP health check
-      interval: 10s
-      timeout: 5s
-      fail_count: 5
-      rise_count: 3
-      http_path: /healthz            # default: /
-      http_expected_status: 200      # default: 200
-    backends:
-      - address: 192.168.2.10:8443
-        weight: 1
-      - address: 192.168.2.11:8443
-        weight: 1
-
-  - name: dns-service
-    listen: 10.0.0.2:53
-    protocol: udp            # UDP load balancing
-    scheduler: rr
-    full_nat: true           # Enable FullNAT (IPVS NAT + iptables SNAT)
-    snat_ip: 10.0.0.2        # Source IP for SNAT; omit for MASQUERADE
-    health_check:
-      enabled: false
-    backends:
-      - address: 192.168.3.10:53
-        weight: 1
-      - address: 192.168.3.11:53
-        weight: 1
-```
+[Create a config file](examples/ezlb.yaml)
 
 ### Log Files
 
@@ -103,9 +40,34 @@ ezlb writes structured log files to the configured log directory (`global.log.ho
 |------|-------------|
 | `ezlb.log` | System log (also printed to stdout) |
 | `traffic.log` | Traffic statistics, emitted by debug-level entries when `global.log.level=debug` |
-| `nat.log` | NAT/SNAT stats and routine operations, primarily emitted by debug-level entries when `global.log.level=debug` |
 
 Log files are automatically rotated using [lumberjack](https://github.com/natefinch/lumberjack) based on `max_size`, `max_backups`, `max_age`, and `compress` settings.
+
+### Prometheus Metrics
+
+When `admin_address` is configured, ezlb exposes a Prometheus metrics endpoint:
+
+```bash
+# Access metrics
+curl http://127.0.0.1:9095/metrics
+
+# Health check endpoint
+curl http://127.0.0.1:9095/health
+```
+
+Available metrics:
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `ezlb_service_connections_total` | Counter | Total connections per service |
+| `ezlb_service_bytes_in_total` | Counter | Total incoming bytes per service |
+| `ezlb_service_bytes_out_total` | Counter | Total outgoing bytes per service |
+| `ezlb_backend_connections_total` | Counter | Total connections per backend |
+| `ezlb_backend_active_connections` | Gauge | Active connections per backend |
+| `ezlb_backend_inactive_connections` | Gauge | Inactive connections per backend |
+| `ezlb_backend_health_status` | Gauge | Health status per backend (1=healthy, 0=unhealthy) |
+| `ezlb_config_reload_total` | Counter | Total config reloads |
+| `ezlb_reconcile_errors_total` | Counter | Total reconcile errors |
 
 ### Usage
 
@@ -131,20 +93,4 @@ make test-linux
 
 # Run e2e tests (Linux, requires root)
 make test-e2e
-```
-
-## Project Structure
-
-```
-ezlb/
-├── cmd/ezlb/            # Entry point, CLI commands
-├── pkg/
-│   ├── config/           # Config management (loading, validation, hot reload)
-│   ├── lvs/              # IPVS management (operations, reconcile)
-│   ├── healthcheck/      # Health checking (TCP & HTTP probes)
-│   ├── snat/             # SNAT/FullNAT management (iptables rules)
-│   └── server/           # Server orchestration (lifecycle management)
-├── tests/e2e/            # End-to-end tests
-├── examples/             # Example configurations
-└── Makefile
 ```

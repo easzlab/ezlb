@@ -1,4 +1,8 @@
 global:
+  admin_address: "127.0.0.1:9095"  # Admin HTTP server address for metrics and health checks (default: disabled)
+  cleanup_on_exit: true      # Remove managed IPVS services and EZLB-SNAT iptables chain on exit (default: true)
+  metrics_enabled: true      # Enable Prometheus metrics endpoint (default: true)
+  metrics_path: "/metrics"   # Metrics endpoint path (default: /metrics)
   log:
     level: info              # Log level: debug, info, warn, error (default: info)
     home: ./logs             # Log directory (default: ./logs)
@@ -9,9 +13,6 @@ global:
     traffic:
       enabled: true          # Enable traffic collector (default: true)
       interval: 20s          # Traffic stats collection interval, min 5s (default: 20s)
-      # Note: Traffic logging is disabled by default per service.
-      # Set traffic_log: true on each service to enable.
-  cleanup_on_exit: true      # Remove managed IPVS services and EZLB-SNAT iptables chain on exit (default: true)
 
 services:
   - name: web-service

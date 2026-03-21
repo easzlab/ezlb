@@ -1,11 +1,13 @@
 package trafficlog
 
 import (
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/easzlab/ezlb/pkg/config"
 	"github.com/easzlab/ezlb/pkg/logutil"
+	"github.com/easzlab/ezlb/pkg/metrics"
 	"go.uber.org/zap"
 )
 
@@ -107,6 +109,7 @@ func (c *Collector) collect() {
 	}
 
 	c.logRawStats(snapshot)
+	c.updateMetrics(snapshot)
 }
 
 // gatherSnapshot collects current statistics from all providers.
@@ -253,4 +256,73 @@ func buildServiceConfigMap(services []config.ServiceConfig) map[string]config.Se
 // is explicitly set to true. A nil pointer (default) or false means disabled.
 func isTrafficLogEnabled(trafficLog *bool) bool {
 	return trafficLog != nil && *trafficLog
+}
+
+// updateMetrics updates Prometheus metrics with the collected snapshot.
+func (c *Collector) updateMetrics(snapshot *TrafficSnapshot) {
+	c.mu.RLock()
+	services := c.services
+	c.mu.RUnlock()
+
+	// Build service key -> config lookup
+	svcConfigMap := buildServiceConfigMap(services)
+
+	// Update service-level metrics
+	for key, stats := range snapshot.Services {
+		svcCfg, ok := svcConfigMap[key]
+		if !ok {
+			continue
+		}
+
+		metrics.SetServiceTraffic(
+			svcCfg.Name,
+			svcCfg.Listen,
+			svcCfg.Protocol,
+			stats.Connections,
+			stats.InBytes,
+			stats.OutBytes,
+			stats.InPkts,
+			stats.OutPkts,
+		)
+	}
+
+	// Update backend-level metrics
+	for backendKey, stats := range snapshot.Backends {
+		svcCfg, ok := svcConfigMap[stats.ServiceKey]
+		if !ok {
+			continue
+		}
+
+		// Extract backend address from the full key (format: "svcKey->dstKey")
+		// The dstKey format is "ip:port"
+		backendAddr := extractBackendAddress(backendKey)
+
+		metrics.SetBackendTraffic(
+			svcCfg.Name,
+			backendAddr,
+			svcCfg.Protocol,
+			stats.Connections,
+			stats.InBytes,
+			stats.OutBytes,
+		)
+
+		metrics.SetBackendConnections(
+			svcCfg.Name,
+			backendAddr,
+			svcCfg.Protocol,
+			stats.ActiveConnections,
+			stats.InactiveConnections,
+		)
+	}
+}
+
+// extractBackendAddress extracts the backend address from the full key.
+// The full key format is "svcKey->dstKey" where dstKey is "ip:port".
+func extractBackendAddress(fullKey string) string {
+	// Split by "->" to get the dstKey part
+	parts := strings.Split(fullKey, "->")
+	if len(parts) == 2 {
+		return parts[1] // Return the dstKey (ip:port)
+	}
+	return fullKey // Fallback to full key if format is unexpected
 }

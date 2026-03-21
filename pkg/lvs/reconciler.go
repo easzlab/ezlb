@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/easzlab/ezlb/pkg/config"
+	"github.com/easzlab/ezlb/pkg/metrics"
 	"github.com/easzlab/ezlb/pkg/snat"
 	"go.uber.org/zap"
 )
@@ -127,6 +128,10 @@ func (r *Reconciler) Reconcile(desiredConfigs []config.ServiceConfig) error {
 
 	if len(reconcileErrors) > 0 {
 		r.logger.Error("reconcile completed with errors", zap.Int("error_count", len(reconcileErrors)))
+		// Increment error counter for each error
+		for range reconcileErrors {
+			metrics.IncReconcileErrors()
+		}
 		return errors.Join(reconcileErrors...)
 	}
 

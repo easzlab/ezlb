@@ -3,10 +3,13 @@ package server
 import (
 	"context"
 	"fmt"
+	"time"
 
+	"github.com/easzlab/ezlb/pkg/admin"
 	"github.com/easzlab/ezlb/pkg/config"
 	"github.com/easzlab/ezlb/pkg/healthcheck"
 	"github.com/easzlab/ezlb/pkg/lvs"
+	"github.com/easzlab/ezlb/pkg/metrics"
 	"github.com/easzlab/ezlb/pkg/snat"
 	"github.com/easzlab/ezlb/pkg/trafficlog"
 	"go.uber.org/zap"
@@ -19,6 +22,7 @@ type Server struct {
 	reconciler    *lvs.Reconciler
 	healthMgr     *healthcheck.Manager
 	snatMgr       snat.Manager
+	adminServer   *admin.Server
 	logger        *zap.Logger
 	trafficLogger *zap.Logger
 	collector     *trafficlog.Collector
@@ -61,6 +65,7 @@ func newServerWithManager(configPath string, lvsMgr *lvs.Manager, logger *zap.Lo
 	// Initialize health check manager with onChange callback that triggers reconcile
 	server.healthMgr = healthcheck.NewManager(func() {
 		server.triggerReconcile()
+		server.updateHealthMetrics()
 	}, logger.Named("healthcheck"))
 
 	// Initialize reconciler with health checker and SNAT manager
@@ -74,6 +79,16 @@ func newServerWithManager(configPath string, lvsMgr *lvs.Manager, logger *zap.Lo
 func (s *Server) Run(ctx context.Context) error {
 	cfg := s.configMgr.GetConfig()
 	s.logKernelParamPreflight()
+
+	// Initialize admin server if configured
+	if cfg.Global.AdminAddress != "" {
+		s.initAdminServer(cfg)
+	}
+
+	// Set up config reload callback for metrics
+	s.configMgr.SetOnReloadCallback(func() {
+		metrics.IncConfigReload()
+	})
 
 	// Register health check targets and start checking
 	s.healthMgr.UpdateTargets(ctx, cfg.Services)
@@ -135,6 +150,29 @@ func (s *Server) triggerReconcile() {
 	}
 }
 
+// updateHealthMetrics updates the health status metrics for all backends.
+func (s *Server) updateHealthMetrics() {
+	cfg := s.configMgr.GetConfig()
+	statuses := s.healthMgr.GetAllStatuses()
+
+	// Build a map of backend address to service name
+	backendToService := make(map[string]string)
+	for _, svc := range cfg.Services {
+		for _, backend := range svc.Backends {
+			backendToService[backend.Address] = svc.Name
+		}
+	}
+
+	// Update metrics for each backend
+	for address, healthy := range statuses {
+		serviceName := backendToService[address]
+		if serviceName == "" {
+			serviceName = "unknown"
+		}
+		metrics.SetBackendHealth(serviceName, address, healthy)
+	}
+}
+
 func (s *Server) syncTrafficCollector(cfg *config.Config) {
 	if cfg == nil {
 		return
@@ -164,9 +202,38 @@ func (s *Server) syncTrafficCollector(cfg *config.Config) {
 	s.collector.UpdateConfig(cfg.Services, cfg.Global.Log.Traffic)
 }
 
+// initAdminServer initializes and starts the admin HTTP server.
+func (s *Server) initAdminServer(cfg *config.Config) {
+	adminCfg := admin.Config{
+		ListenAddr:     cfg.Global.AdminAddress,
+		MetricsEnabled: cfg.Global.IsMetricsEnabled(),
+		MetricsPath:    cfg.Global.GetMetricsPath(),
+	}
+
+	s.adminServer = admin.NewServer(adminCfg, s.logger.Named("admin"))
+
+	// Set up health check function for admin server
+	s.adminServer.SetHealthCheckFunc(func() map[string]bool {
+		return s.healthMgr.GetAllStatuses()
+	})
+
+	if err := s.adminServer.Start(); err != nil {
+		s.logger.Error("failed to start admin server", zap.Error(err))
+	}
+}
+
 // shutdown gracefully stops all modules.
 func (s *Server) shutdown() {
-	// Stop traffic collector first
+	// Stop admin server first
+	if s.adminServer != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.adminServer.Stop(ctx); err != nil {
+			s.logger.Error("failed to stop admin server", zap.Error(err))
+		}
+	}
+
+	// Stop traffic collector
 	if s.collector != nil {
 		s.collector.Stop()
 		s.logger.Info("traffic collector stopped")
@@ -187,4 +254,3 @@ func (s *Server) shutdown() {
 	s.lvsMgr.Close()
 	s.logger.Info("server stopped")
 }
-

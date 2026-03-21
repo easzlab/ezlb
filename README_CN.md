@@ -12,6 +12,7 @@
 - **TCP & HTTP 健康检查**：每个服务独立配置检查参数，支持 TCP 连接探测和 HTTP GET 探测（可配置路径和期望状态码）
 - **FullNAT / SNAT 支持**：按 service 粒度可选启用 FullNAT 模式（IPVS NAT + iptables SNAT/MASQUERADE），在 iptables-nft 后端系统上自动兼容 nftables
 - **配置热加载**：修改配置文件自动触发 Reconcile，无需重启
+- **Prometheus 监控指标**：内置指标端点，支持监控流量统计、健康状态和 Reconcile 错误
 
 ## 快速开始
 
@@ -29,71 +30,7 @@ make build-linux
 
 ### 配置
 
-创建配置文件 `config.yaml`：
-
-```yaml
-global:
-  log:
-    level: info              # 全局日志级别；traffic/nat 的 debug 日志仅在设为 debug 时写入
-    home: ./logs             # 日志目录（默认: ./logs）
-    max_size: 50             # 单个日志文件最大 MB（默认: 50）
-    max_backups: 3           # 保留旧日志文件数量（默认: 3）
-    traffic:
-      enabled: true          # 启用流量日志（默认: true）
-      interval: 15s          # 流量统计采集间隔，最小 5s（默认: 15s）
-  cleanup_on_exit: true      # 退出时删除 ezlb 管理的 IPVS 服务和 EZLB-SNAT iptables 链（默认: true）
-
-services:
-  - name: web-service
-    listen: 10.0.0.1:80
-    protocol: tcp
-    scheduler: wrr
-    health_check:
-      enabled: true
-      type: tcp              # 可选: tcp（默认）、http
-      interval: 5s
-      timeout: 3s
-      fail_count: 3
-      rise_count: 2
-    backends:
-      - address: 192.168.1.10:8080
-        weight: 5
-      - address: 192.168.1.11:8080
-        weight: 3
-
-  - name: api-service
-    listen: 10.0.0.1:443
-    protocol: tcp
-    scheduler: wlc
-    health_check:
-      enabled: true
-      type: http             # HTTP 健康检查
-      interval: 10s
-      timeout: 5s
-      fail_count: 5
-      rise_count: 3
-      http_path: /healthz            # 默认: /
-      http_expected_status: 200      # 默认: 200
-    backends:
-      - address: 192.168.2.10:8443
-        weight: 1
-      - address: 192.168.2.11:8443
-        weight: 1
-
-  - name: dns-service
-    listen: 10.0.0.2:53
-    protocol: udp            # UDP 负载均衡
-    scheduler: rr
-    full_nat: true           # 启用 FullNAT（IPVS NAT + iptables SNAT）
-    snat_ip: 10.0.0.2        # SNAT 源地址；不配置则使用 MASQUERADE
-    health_check:
-      enabled: false
-    backends:
-      - address: 192.168.3.10:53
-        weight: 1
-      - address: 192.168.3.11:53
-        weight: 1
-```
+[创建配置文件](examples/ezlb.yaml)
 
 ### 日志文件
 
@@ -103,9 +40,34 @@ ezlb 将结构化日志写入配置的日志目录（`global.log.home`，默认 
 |------|------|
 | `ezlb.log` | 系统日志（同时输出到 stdout） |
 | `traffic.log` | 流量统计日志；仅当 `global.log.level=debug` 时写入 debug 级别统计 |
-| `nat.log` | NAT/SNAT 统计与常规操作日志；主要在 `global.log.level=debug` 时写入 |
 
 日志文件基于 [lumberjack](https://github.com/natefinch/lumberjack) 自动轮转，可通过 `max_size`、`max_backups`、`max_age`、`compress` 配置。
+
+### Prometheus 监控指标
+
+配置 `admin_address` 后，ezlb 会暴露 Prometheus 指标端点：
+
+```bash
+# 访问指标
+curl http://127.0.0.1:9095/metrics
+
+# 健康检查端点
+curl http://127.0.0.1:9095/health
+```
+
+可用指标：
+
+| 指标名 | 类型 | 说明 |
+|--------|------|------|
+| `ezlb_service_connections_total` | Counter | 每个服务的总连接数 |
+| `ezlb_service_bytes_in_total` | Counter | 每个服务的入向字节数 |
+| `ezlb_service_bytes_out_total` | Counter | 每个服务的出向字节数 |
+| `ezlb_backend_connections_total` | Counter | 每个后端的总连接数 |
+| `ezlb_backend_active_connections` | Gauge | 每个后端的活跃连接数 |
+| `ezlb_backend_inactive_connections` | Gauge | 每个后端的非活跃连接数 |
+| `ezlb_backend_health_status` | Gauge | 每个后端的健康状态（1=健康，0=不健康）|
+| `ezlb_config_reload_total` | Counter | 配置重载总次数 |
+| `ezlb_reconcile_errors_total` | Counter | Reconcile 错误总次数 |
 
 ### 运行
 
@@ -131,20 +93,4 @@ make test-linux
 
 # 运行 e2e 测试（Linux，需要 root 权限）
 make test-e2e
-```
-
-## 项目结构
-
-```
-ezlb/
-├── cmd/ezlb/            # 程序入口，CLI 命令
-├── pkg/
-│   ├── config/           # 配置管理（加载、校验、热加载）
-│   ├── lvs/              # IPVS 管理（操作封装、Reconcile）
-│   ├── healthcheck/      # 健康检查（TCP & HTTP 探测）
-│   ├── snat/             # SNAT/FullNAT 管理（iptables 规则）
-│   └── server/           # 服务编排（生命周期管理）
-├── tests/e2e/            # 端到端测试
-├── examples/             # 示例配置
-└── Makefile
 ```

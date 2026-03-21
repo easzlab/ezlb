@@ -240,6 +240,19 @@ func (m *Manager) handleCheckResult(address string, checkErr error, svcCheck *se
 	}
 }
 
+// GetAllStatuses returns a copy of all backend health statuses.
+// The key format is "serviceName/backendAddress".
+func (m *Manager) GetAllStatuses() map[string]bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	result := make(map[string]bool, len(m.statuses))
+	for address, status := range m.statuses {
+		result[address] = status.healthy
+	}
+	return result
+}
+
 // Stop cancels all running health check goroutines and clears state.
 func (m *Manager) Stop() {
 	m.mu.Lock()
