@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 
 	"github.com/easzlab/ezlb/pkg/config"
@@ -18,7 +19,7 @@ import (
 var (
 	BuildTime   string
 	BuildCommit string
-	Version     = "0.5.0"
+	Version     = "0.5.1"
 	configPath  string
 	showVersion bool
 )
@@ -37,10 +38,11 @@ func newRootCommand() *cobra.Command {
 		Long:  "A lightweight four-layer TCP load balancer using Linux IPVS with declarative reconcile mode.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if showVersion {
-				fmt.Printf("Version: %s\nBuild commit: %s\nBuild time: %s\n",
+				fmt.Printf("Version: %s\nBuild commit: %s\nBuild time: %s\nGo version: %s\n",
 					Version,
 					BuildCommit,
 					BuildTime,
+					runtime.Version(),
 				)
 				return nil
 			}

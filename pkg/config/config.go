@@ -13,8 +13,8 @@ import (
 
 // Config represents the top-level configuration structure.
 type Config struct {
-	Global   GlobalConfig    `yaml:"global"   mapstructure:"global"`
 	Services []ServiceConfig `yaml:"services" mapstructure:"services"`
+	Global   GlobalConfig    `yaml:"global"   mapstructure:"global"`
 }
 
 // GlobalConfig holds global settings.

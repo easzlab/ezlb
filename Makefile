@@ -26,7 +26,7 @@ help: ## show help
 build: ## build the binary
 	@echo "Building $(PROJECT_NAME) ..."
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=0 go build -tags integration $(LDFLAGS) -o build/ezlb cmd/ezlb/main.go
+	CGO_ENABLED=0 go build $(LDFLAGS) -o build/ezlb cmd/ezlb/main.go
 	@echo "✓ Build completed."
 
 .PHONY: build-dev
