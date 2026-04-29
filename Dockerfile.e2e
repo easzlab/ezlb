@@ -1,4 +1,4 @@
-FROM golang:1.25
+FROM golang:1.26
 
 ENV GOPROXY="https://goproxy.cn,direct"
 ENV LANG=C.UTF-8

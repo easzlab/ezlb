@@ -106,4 +106,4 @@ align: ## fieldalignment for structs
 	@go install golang.org/x/tools/go/analysis/passes/fieldalignment/cmd/fieldalignment@latest
 	@echo "Running fieldalignment..."
 	@fieldalignment -fix ./...
-	@echo "✓ Dependencies updated"
+	@echo "✓ alignment completed"
