@@ -12,7 +12,6 @@ import (
 	"github.com/easzlab/ezlb/pkg/logutil"
 	"github.com/easzlab/ezlb/pkg/server"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	"go.uber.org/zap"
 )
 
@@ -90,7 +89,7 @@ func startDaemon(cmd *cobra.Command, args []string) error {
 	)
 
 	// Phase 2: Pre-read log config to build proper loggers before full config load
-	logCfg, err := loadLogConfig(configPath)
+	logCfg, err := config.LoadLogConfig(configPath)
 	if err != nil {
 		bootstrapLogger.Warn("failed to pre-read log config, using defaults", zap.Error(err))
 		logCfg = config.LogConfig{} // use defaults
@@ -112,7 +111,7 @@ func startDaemon(cmd *cobra.Command, args []string) error {
 	)
 
 	// Phase 4: Create server
-	srv, err := server.NewServer(configPath, logger, loggers.Traffic)
+	srv, err := server.NewServer(configPath, logger)
 	if err != nil {
 		logger.Fatal("failed to create server", zap.Error(err))
 	}
@@ -144,7 +143,7 @@ func runOnce(cmd *cobra.Command, args []string) error {
 	)
 
 	// Phase 2: Pre-read log config
-	logCfg, err := loadLogConfig(configPath)
+	logCfg, err := config.LoadLogConfig(configPath)
 	if err != nil {
 		bootstrapLogger.Warn("failed to pre-read log config, using defaults", zap.Error(err))
 		logCfg = config.LogConfig{}
@@ -159,40 +158,10 @@ func runOnce(cmd *cobra.Command, args []string) error {
 	defer loggers.SyncAll()
 
 	// Phase 4: Create server
-	srv, err := server.NewServer(configPath, loggers.System, loggers.Traffic)
+	srv, err := server.NewServer(configPath, loggers.System)
 	if err != nil {
 		return fmt.Errorf("failed to create server: %w", err)
 	}
 
 	return srv.RunOnce()
-}
-
-// loadLogConfig pre-reads only the global.log section from the config file.
-// This allows building proper loggers before the full config validation runs.
-func loadLogConfig(path string) (config.LogConfig, error) {
-	v := viper.New()
-	v.SetConfigFile(path)
-
-	// Set defaults matching config.NewManager
-	v.SetDefault("global.log.level", "info")
-	v.SetDefault("global.log.home", "./logs")
-	v.SetDefault("global.log.max_size", 50)
-	v.SetDefault("global.log.max_backups", 3)
-	v.SetDefault("global.log.max_age", 0)
-	v.SetDefault("global.log.compress", false)
-
-	if err := v.ReadInConfig(); err != nil {
-		return config.LogConfig{}, fmt.Errorf("failed to read config file: %w", err)
-	}
-
-	var cfg struct {
-		Global struct {
-			Log config.LogConfig `mapstructure:"log"`
-		} `mapstructure:"global"`
-	}
-	if err := v.Unmarshal(&cfg); err != nil {
-		return config.LogConfig{}, fmt.Errorf("failed to unmarshal config: %w", err)
-	}
-
-	return cfg.Global.Log, nil
 }

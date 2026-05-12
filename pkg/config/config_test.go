@@ -748,40 +748,26 @@ func TestLogConfig_GetMaxAge_Default(t *testing.T) {
 	}
 }
 
-// --- TrafficLogConfig getter tests ---
+// --- GlobalConfig metrics interval tests ---
 
-func TestTrafficLogConfig_IsEnabled_Default(t *testing.T) {
-	tc := TrafficLogConfig{}
-	if !tc.IsEnabled() {
-		t.Error("expected IsEnabled to return true when Enabled is nil")
+func TestGlobalConfig_GetMetricsInterval_Default(t *testing.T) {
+	g := GlobalConfig{}
+	if g.GetMetricsInterval() != 15*time.Second {
+		t.Errorf("expected default interval 15s, got %v", g.GetMetricsInterval())
 	}
 }
 
-func TestTrafficLogConfig_IsEnabled_False(t *testing.T) {
-	tc := TrafficLogConfig{Enabled: boolPtr(false)}
-	if tc.IsEnabled() {
-		t.Error("expected IsEnabled to return false when Enabled is false")
+func TestGlobalConfig_GetMetricsInterval_TooSmall(t *testing.T) {
+	g := GlobalConfig{MetricsInterval: "2s"}
+	if g.GetMetricsInterval() != 5*time.Second {
+		t.Errorf("expected clamped interval 5s for too-small value, got %v", g.GetMetricsInterval())
 	}
 }
 
-func TestTrafficLogConfig_GetInterval_Default(t *testing.T) {
-	tc := TrafficLogConfig{}
-	if tc.GetInterval() != 15*time.Second {
-		t.Errorf("expected default interval 15s, got %v", tc.GetInterval())
-	}
-}
-
-func TestTrafficLogConfig_GetInterval_TooSmall(t *testing.T) {
-	tc := TrafficLogConfig{Interval: "2s"}
-	if tc.GetInterval() != 5*time.Second {
-		t.Errorf("expected clamped interval 5s for too-small value, got %v", tc.GetInterval())
-	}
-}
-
-func TestTrafficLogConfig_GetInterval_Valid(t *testing.T) {
-	tc := TrafficLogConfig{Interval: "30s"}
-	if tc.GetInterval() != 30*time.Second {
-		t.Errorf("expected interval 30s, got %v", tc.GetInterval())
+func TestGlobalConfig_GetMetricsInterval_Valid(t *testing.T) {
+	g := GlobalConfig{MetricsInterval: "30s"}
+	if g.GetMetricsInterval() != 30*time.Second {
+		t.Errorf("expected interval 30s, got %v", g.GetMetricsInterval())
 	}
 }
 
@@ -796,57 +782,31 @@ func TestValidate_LogLevelInvalid(t *testing.T) {
 	}
 }
 
-func TestValidate_TrafficLogTrue(t *testing.T) {
+func TestValidate_MetricsIntervalTooSmall(t *testing.T) {
 	cfg := validConfig()
-	cfg.Services[0].TrafficLog = boolPtr(true)
-	if err := Validate(cfg); err != nil {
-		t.Fatalf("expected traffic_log=true to be valid, got: %v", err)
-	}
-}
-
-func TestValidate_TrafficLogFalse(t *testing.T) {
-	cfg := validConfig()
-	cfg.Services[0].TrafficLog = boolPtr(false)
-	if err := Validate(cfg); err != nil {
-		t.Fatalf("expected traffic_log=false to be valid, got: %v", err)
-	}
-}
-
-func TestValidate_TrafficLogNil(t *testing.T) {
-	cfg := validConfig()
-	cfg.Services[0].TrafficLog = nil
-	if err := Validate(cfg); err != nil {
-		t.Fatalf("expected traffic_log=nil (default disabled) to be valid, got: %v", err)
-	}
-}
-
-func TestValidate_TrafficIntervalTooSmall(t *testing.T) {
-	cfg := validConfig()
-	cfg.Global.Log.Traffic.Interval = "2s"
+	cfg.Global.MetricsInterval = "2s"
 	err := Validate(cfg)
 	if err == nil {
-		t.Fatal("expected error for traffic interval < 5s, got nil")
+		t.Fatal("expected error for metrics_interval < 5s, got nil")
 	}
 }
 
-func TestValidate_TrafficIntervalValid(t *testing.T) {
+func TestValidate_MetricsIntervalValid(t *testing.T) {
 	cfg := validConfig()
-	cfg.Global.Log.Traffic.Interval = "30s"
+	cfg.Global.MetricsInterval = "30s"
 	if err := Validate(cfg); err != nil {
-		t.Fatalf("expected valid traffic interval, got: %v", err)
+		t.Fatalf("expected valid metrics_interval, got: %v", err)
 	}
 }
 
 func TestManager_LoadYAML_NewLogConfig(t *testing.T) {
 	yaml := `
 global:
+  metrics_interval: 30s
   log:
     level: debug
     home: /tmp/ezlb-logs
     max_size: 100
-    traffic:
-      enabled: false
-      interval: 30s
 services:
   - name: web-service
     listen: 10.0.0.1:80
@@ -873,11 +833,8 @@ services:
 	if cfg.Global.Log.GetMaxSize() != 100 {
 		t.Errorf("expected max_size 100, got %d", cfg.Global.Log.GetMaxSize())
 	}
-	if cfg.Global.Log.Traffic.IsEnabled() {
-		t.Error("expected traffic logging to be disabled")
-	}
-	if cfg.Global.Log.Traffic.GetInterval() != 30*time.Second {
-		t.Errorf("expected traffic interval 30s, got %v", cfg.Global.Log.Traffic.GetInterval())
+	if cfg.Global.GetMetricsInterval() != 30*time.Second {
+		t.Errorf("expected metrics_interval 30s, got %v", cfg.Global.GetMetricsInterval())
 	}
 }
 

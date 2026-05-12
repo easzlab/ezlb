@@ -285,20 +285,21 @@ func (m *linuxManager) deleteForwardRule(rule ForwardRule) error {
 	return m.ipt.DeleteIfExists(filterTable, forwardChain, spec...)
 }
 
-// Stats implements StatsProvider by parsing iptables -t nat -vnL EZLB-SNAT output.
-// It returns cumulative packet/byte counts keyed by rule key (backendIP:port/protocol).
+// Stats implements StatsProvider by querying iptables structured stats for
+// the EZLB-SNAT chain. Returns cumulative packet/byte counts keyed by
+// "backendIP:port/protocol".
 func (m *linuxManager) Stats() (map[string]SNATRuleStats, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	stats, err := m.ipt.Stats(natTable, snatChain)
+	stats, err := m.ipt.StructuredStats(natTable, snatChain)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get stats for chain %s: %w", snatChain, err)
 	}
 
-	result := make(map[string]SNATRuleStats)
+	result := make(map[string]SNATRuleStats, len(stats))
 	for _, stat := range stats {
-		ruleKey, ruleStats, ok := parseSNATStatsRow(stat)
+		ruleKey, ruleStats, ok := parseStructuredSNATStat(stat)
 		if !ok {
 			continue
 		}

@@ -6,19 +6,17 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/easzlab/ezlb/pkg/config"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
 )
 
-func TestServerSyncTrafficCollectorStartsOnHotEnable(t *testing.T) {
+func TestServerSyncTrafficCollectorStartsWhenMetricsEnabled(t *testing.T) {
 	configYAML := `
 global:
   log:
     level: info
-    traffic:
-      enabled: false
+  metrics_enabled: true
 services:
   - name: web-service
     listen: 10.0.0.1:80
@@ -37,18 +35,46 @@ services:
 		srv.shutdown()
 	})
 
-	initialCfg := srv.configMgr.GetConfig()
-	srv.syncTrafficCollector(initialCfg)
-	if srv.collector != nil {
-		t.Fatal("expected collector to remain nil while traffic logging is disabled")
-	}
-
-	enabledCfg := cloneConfig(initialCfg)
-	enabledCfg.Global.Log.Traffic.Enabled = boolPtr(true)
-
-	srv.syncTrafficCollector(enabledCfg)
+	cfg := srv.configMgr.GetConfig()
+	srv.syncTrafficCollector(cfg)
 	if srv.collector == nil {
-		t.Fatal("expected collector to be created when traffic logging is hot-enabled")
+		t.Fatal("expected collector to be created when metrics are enabled")
+	}
+}
+
+func TestServerSyncTrafficCollectorSkippedWhenMetricsDisabled(t *testing.T) {
+	disabled := false
+	configYAML := `
+global:
+  log:
+    level: info
+  metrics_enabled: false
+services:
+  - name: web-service
+    listen: 10.0.0.1:80
+    protocol: tcp
+    scheduler: rr
+    health_check:
+      enabled: false
+    backends:
+      - address: 192.168.1.10:8080
+        weight: 1
+`
+	configPath := writeYAMLFile(t, t.TempDir(), configYAML)
+
+	srv := newTestServer(t, configPath)
+	t.Cleanup(func() {
+		srv.shutdown()
+	})
+
+	cfg := srv.configMgr.GetConfig()
+	// Defensive: confirm we built the config we think we built.
+	if cfg.Global.MetricsEnabled == nil || *cfg.Global.MetricsEnabled != disabled {
+		t.Fatalf("expected metrics_enabled=false, got %+v", cfg.Global.MetricsEnabled)
+	}
+	srv.syncTrafficCollector(cfg)
+	if srv.collector != nil {
+		t.Fatal("expected collector to remain nil when metrics are disabled")
 	}
 }
 
@@ -94,7 +120,7 @@ services:
 
 	core, logs := observer.New(zapcore.ErrorLevel)
 	lvsMgr := newTestLVSManager(t)
-	srv, err := newServerWithManager(configPath, lvsMgr, zap.New(core), zap.NewNop())
+	srv, err := newServerWithManager(configPath, lvsMgr, zap.New(core))
 	if err != nil {
 		t.Fatalf("newServerWithManager failed: %v", err)
 	}
@@ -189,21 +215,4 @@ func TestLogKernelParamPreflightLogsInfoWhenAllMatch(t *testing.T) {
 	if logs.FilterMessage("kernel parameter preflight passed").Len() != 1 {
 		t.Fatalf("expected 1 kernel parameter preflight success log, got %d", logs.FilterMessage("kernel parameter preflight passed").Len())
 	}
-}
-
-func cloneConfig(cfg *config.Config) *config.Config {
-	if cfg == nil {
-		return nil
-	}
-
-	cloned := *cfg
-	cloned.Services = append([]config.ServiceConfig(nil), cfg.Services...)
-	for i := range cfg.Services {
-		cloned.Services[i].Backends = append([]config.BackendConfig(nil), cfg.Services[i].Backends...)
-	}
-	return &cloned
-}
-
-func boolPtr(v bool) *bool {
-	return &v
 }

@@ -12,9 +12,12 @@ import (
 )
 
 // Loggers holds the logger instances used throughout the application.
+//
+// Only one logger (System) is exposed. Traffic stats are emitted as
+// Prometheus metrics, not as a separate log file, so there is no
+// dedicated traffic logger.
 type Loggers struct {
-	System  *zap.Logger
-	Traffic *zap.Logger
+	System *zap.Logger
 }
 
 // SyncAll calls Sync() on all loggers to flush any buffered log entries.
@@ -22,17 +25,14 @@ func (l *Loggers) SyncAll() {
 	if l.System != nil {
 		_ = l.System.Sync()
 	}
-	if l.Traffic != nil {
-		_ = l.Traffic.Sync()
-	}
 }
 
-// BuildLoggers creates system and traffic loggers based on LogConfig.
+// BuildLoggers creates the system logger based on LogConfig.
 //
-// System logger outputs to stdout/stderr + ${home}/ezlb.log.
-// Traffic logger outputs to ${home}/traffic.log.
-//
-// On file creation failure, logs a warning to stderr and falls back to stdout/stderr only.
+// System logger outputs to stdout + ${home}/ezlb.log when the log directory
+// is writable. If the directory cannot be created OR exists but is not
+// writable, a warning is printed to stderr and the file core is dropped
+// (stdout-only).
 func BuildLoggers(cfg config.LogConfig) (*Loggers, error) {
 	level, err := parseZapLevel(cfg.GetLevel())
 	if err != nil {
@@ -40,9 +40,8 @@ func BuildLoggers(cfg config.LogConfig) (*Loggers, error) {
 	}
 
 	home := cfg.GetHome()
-	dirErr := os.MkdirAll(home, 0755)
+	dirWritable := ensureWritableDir(home)
 
-	// Encoder configs
 	consoleEncoderCfg := zap.NewProductionEncoderConfig()
 	consoleEncoderCfg.TimeKey = "time"
 	consoleEncoderCfg.EncodeTime = zapcore.TimeEncoderOfLayout("2006-01-02 15:04:05.000")
@@ -54,35 +53,41 @@ func BuildLoggers(cfg config.LogConfig) (*Loggers, error) {
 	jsonEncoderCfg.EncodeTime = zapcore.TimeEncoderOfLayout("2006-01-02 15:04:05.000")
 	jsonEncoder := zapcore.NewJSONEncoder(jsonEncoderCfg)
 
-	// Build system logger: stdout + file
 	systemCores := []zapcore.Core{
 		zapcore.NewCore(consoleEncoder, zapcore.AddSync(os.Stdout), level),
 	}
-	if dirErr == nil {
+	if dirWritable {
 		systemFileWriter := newLumberjackWriter(filepath.Join(home, "ezlb.log"), cfg)
 		systemCores = append(systemCores, zapcore.NewCore(jsonEncoder, zapcore.AddSync(systemFileWriter), level))
-	} else {
-		fmt.Fprintf(os.Stderr, "WARNING: failed to create log directory %q: %v, system log will only output to stdout\n", home, dirErr)
-	}
-	systemLogger := zap.New(zapcore.NewTee(systemCores...))
-
-	// Build traffic logger: file only (fallback to stdout on error)
-	// Traffic log call sites use Debug(), but whether they are written is still
-	// controlled by the global log level. This keeps traffic.log gated by
-	// global.log.level while still classifying the entries themselves as debug.
-	var trafficLogger *zap.Logger
-	if dirErr == nil {
-		trafficFileWriter := newLumberjackWriter(filepath.Join(home, "traffic.log"), cfg)
-		trafficLogger = zap.New(zapcore.NewCore(jsonEncoder, zapcore.AddSync(trafficFileWriter), level))
-	} else {
-		fmt.Fprintf(os.Stderr, "WARNING: failed to create log directory %q: %v, traffic log will fallback to stdout\n", home, dirErr)
-		trafficLogger = zap.New(zapcore.NewCore(jsonEncoder, zapcore.AddSync(os.Stdout), level))
 	}
 
 	return &Loggers{
-		System:  systemLogger,
-		Traffic: trafficLogger,
+		System: zap.New(zapcore.NewTee(systemCores...)),
 	}, nil
+}
+
+// ensureWritableDir creates the directory if missing and verifies it is
+// actually writable by the current process. Returns true only when the
+// directory is usable for log files. Any failure is reported to stderr.
+//
+// The probe is necessary because os.MkdirAll succeeds when the directory
+// already exists even with read-only permissions, which would later cause
+// lumberjack to silently drop log lines on first write.
+func ensureWritableDir(home string) bool {
+	if err := os.MkdirAll(home, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "WARNING: failed to create log directory %q: %v, falling back to stdout-only logging\n", home, err)
+		return false
+	}
+
+	probe, err := os.CreateTemp(home, ".ezlb-write-probe-*")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "WARNING: log directory %q is not writable: %v, falling back to stdout-only logging\n", home, err)
+		return false
+	}
+	probeName := probe.Name()
+	_ = probe.Close()
+	_ = os.Remove(probeName)
+	return true
 }
 
 // NewBootstrapLogger creates a minimal stdout-only logger for use before config is loaded.

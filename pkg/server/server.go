@@ -11,37 +11,41 @@ import (
 	"github.com/easzlab/ezlb/pkg/lvs"
 	"github.com/easzlab/ezlb/pkg/metrics"
 	"github.com/easzlab/ezlb/pkg/snat"
-	"github.com/easzlab/ezlb/pkg/trafficlog"
+	"github.com/easzlab/ezlb/pkg/trafficmetrics"
 	"go.uber.org/zap"
 )
 
+// reconcileDebounceWindow is the window during which multiple reconcile signals
+// triggered by rapid health state flips are coalesced into a single reconcile pass.
+const reconcileDebounceWindow = 200 * time.Millisecond
+
 // Server coordinates all modules and manages the overall service lifecycle.
 type Server struct {
-	configMgr     *config.Manager
-	lvsMgr        *lvs.Manager
-	reconciler    *lvs.Reconciler
-	healthMgr     *healthcheck.Manager
-	snatMgr       snat.Manager
-	adminServer   *admin.Server
-	logger        *zap.Logger
-	trafficLogger *zap.Logger
-	collector     *trafficlog.Collector
+	configMgr       *config.Manager
+	lvsMgr          *lvs.Manager
+	reconciler      *lvs.Reconciler
+	healthMgr       *healthcheck.Manager
+	snatMgr         snat.Manager
+	adminServer     *admin.Server
+	logger          *zap.Logger
+	collector       *trafficmetrics.Collector
+	reconcileSignal chan struct{}
 }
 
 // NewServer initializes all modules and returns a ready-to-run Server.
-func NewServer(configPath string, logger *zap.Logger, trafficLogger *zap.Logger) (*Server, error) {
+func NewServer(configPath string, logger *zap.Logger) (*Server, error) {
 	// Initialize IPVS manager
 	lvsMgr, err := lvs.NewManager(logger.Named("lvs"))
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize IPVS manager: %w", err)
 	}
 
-	return newServerWithManager(configPath, lvsMgr, logger, trafficLogger)
+	return newServerWithManager(configPath, lvsMgr, logger)
 }
 
 // newServerWithManager initializes a Server with a pre-created LVS Manager.
 // This allows tests to inject a platform-appropriate Manager instance.
-func newServerWithManager(configPath string, lvsMgr *lvs.Manager, logger *zap.Logger, trafficLogger *zap.Logger) (*Server, error) {
+func newServerWithManager(configPath string, lvsMgr *lvs.Manager, logger *zap.Logger) (*Server, error) {
 	// Initialize config manager
 	configMgr, err := config.NewManager(configPath, logger.Named("config"))
 	if err != nil {
@@ -55,11 +59,11 @@ func newServerWithManager(configPath string, lvsMgr *lvs.Manager, logger *zap.Lo
 	}
 
 	server := &Server{
-		configMgr:     configMgr,
-		lvsMgr:        lvsMgr,
-		snatMgr:       snatMgr,
-		logger:        logger,
-		trafficLogger: trafficLogger,
+		configMgr:       configMgr,
+		lvsMgr:          lvsMgr,
+		snatMgr:         snatMgr,
+		logger:          logger,
+		reconcileSignal: make(chan struct{}, 1),
 	}
 
 	// Initialize health check manager with onChange callback that triggers reconcile
@@ -117,10 +121,37 @@ func (s *Server) Run(ctx context.Context) error {
 			}
 			s.syncTrafficCollector(newCfg)
 
+		case <-s.reconcileSignal:
+			// Coalesce rapid health flips: drain any additional signals arriving
+			// within the debounce window and perform a single reconcile pass.
+			s.drainReconcileSignals(ctx)
+			cfg := s.configMgr.GetConfig()
+			if err := s.reconciler.Reconcile(cfg.Services); err != nil {
+				s.logger.Error("reconcile after health change failed", zap.Error(err))
+			}
+
 		case <-ctx.Done():
 			s.logger.Info("shutdown signal received, stopping server")
 			s.shutdown()
 			return nil
+		}
+	}
+}
+
+// drainReconcileSignals waits up to reconcileDebounceWindow and consumes any
+// additional reconcile signals that arrive within the window, so that a burst
+// of health flips results in a single reconcile pass.
+func (s *Server) drainReconcileSignals(ctx context.Context) {
+	timer := time.NewTimer(reconcileDebounceWindow)
+	defer timer.Stop()
+	for {
+		select {
+		case <-s.reconcileSignal:
+			// another signal arrived within the window, keep draining
+		case <-timer.C:
+			return
+		case <-ctx.Done():
+			return
 		}
 	}
 }
@@ -143,10 +174,13 @@ func (s *Server) RunOnce() error {
 }
 
 // triggerReconcile is called by the health check manager when a backend's health status changes.
+// It posts a non-blocking signal to the main event loop which coalesces rapid flips
+// into a single reconcile pass (see drainReconcileSignals).
 func (s *Server) triggerReconcile() {
-	cfg := s.configMgr.GetConfig()
-	if err := s.reconciler.Reconcile(cfg.Services); err != nil {
-		s.logger.Error("reconcile after health change failed", zap.Error(err))
+	select {
+	case s.reconcileSignal <- struct{}{}:
+	default:
+		// A reconcile signal is already pending; the next reconcile will cover this change too.
 	}
 }
 
@@ -173,33 +207,35 @@ func (s *Server) updateHealthMetrics() {
 	}
 }
 
+// syncTrafficCollector starts the Prometheus traffic stats collector when
+// metrics are enabled, or pushes the new config to an already-running
+// collector on hot reload. The collector only runs in daemon mode (Run);
+// it is intentionally not started by RunOnce.
 func (s *Server) syncTrafficCollector(cfg *config.Config) {
 	if cfg == nil {
 		return
 	}
 
 	if s.collector == nil {
-		if !cfg.Global.Log.Traffic.IsEnabled() {
+		if !cfg.Global.IsMetricsEnabled() {
 			return
 		}
 
-		lvsStats := trafficlog.NewLVSStatsAdapter(s.lvsMgr)
-
-		s.collector = trafficlog.NewCollector(
+		lvsStats := trafficmetrics.NewLVSStatsAdapter(s.lvsMgr)
+		s.collector = trafficmetrics.NewCollector(
 			lvsStats,
-			s.trafficLogger,
-			s.logger,
+			s.logger.Named("trafficstats"),
 			cfg.Services,
-			cfg.Global.Log.Traffic,
+			cfg.Global,
 		)
 		s.collector.Start()
-		s.logger.Info("traffic collector started",
-			zap.Duration("interval", cfg.Global.Log.Traffic.GetInterval()),
+		s.logger.Info("traffic stats collector started",
+			zap.Duration("interval", cfg.Global.GetMetricsInterval()),
 		)
 		return
 	}
 
-	s.collector.UpdateConfig(cfg.Services, cfg.Global.Log.Traffic)
+	s.collector.UpdateConfig(cfg.Services, cfg.Global)
 }
 
 // initAdminServer initializes and starts the admin HTTP server.

@@ -263,7 +263,7 @@ func (r *Reconciler) buildDesiredState(configs []config.ServiceConfig) (map[Serv
 				continue
 			}
 
-			dst, err := ConfigToIPVSDestination(backendCfg)
+			dst, err := ConfigToIPVSDestinationWithMode(backendCfg, svcCfg.GetForwardMode())
 			if err != nil {
 				return nil, fmt.Errorf("service %q, backend %q: %w", svcCfg.Name, backendCfg.Address, err)
 			}
@@ -316,8 +316,10 @@ func (r *Reconciler) reconcileDestinations(desired *desiredService) error {
 				reconcileErrors = append(reconcileErrors, fmt.Errorf("create destination %s: %w", key, err))
 			}
 		} else {
-			// Destination exists -> check if weight needs update
-			if actualDst.Weight != desiredDst.Weight {
+			// Destination exists -> check if weight or forward mode needs update
+			actualFlag := actualDst.ConnectionFlags & ConnectionFlagFwdMask
+			desiredFlag := desiredDst.ConnectionFlags & ConnectionFlagFwdMask
+			if actualDst.Weight != desiredDst.Weight || actualFlag != desiredFlag {
 				if err := r.manager.UpdateDestination(desired.service, desiredDst); err != nil {
 					reconcileErrors = append(reconcileErrors, fmt.Errorf("update destination %s: %w", key, err))
 				}

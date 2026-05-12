@@ -104,7 +104,7 @@ services:
 	// manager (without flushing IPVS) to verify the reconcile path is idempotent.
 	logger := zap.NewNop()
 	lvsMgr2 := newTestLVSManager(t)
-	srv2, err := newServerWithManager(configPath, lvsMgr2, logger, zap.NewNop())
+	srv2, err := newServerWithManager(configPath, lvsMgr2, logger)
 	if err != nil {
 		t.Fatalf("newServerWithManager failed: %v", err)
 	}

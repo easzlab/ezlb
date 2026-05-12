@@ -150,8 +150,28 @@ func ConfigToIPVSService(svcCfg config.ServiceConfig) (*Service, error) {
 	}, nil
 }
 
+// forwardFlagFromMode converts a forward mode string to its IPVS connection flag.
+func forwardFlagFromMode(mode string) (uint32, error) {
+	switch mode {
+	case "", "nat":
+		return ConnectionFlagMasq, nil
+	case "dr":
+		return ConnectionFlagDirectRoute, nil
+	case "tun":
+		return ConnectionFlagTunnel, nil
+	default:
+		return 0, fmt.Errorf("unsupported forward_mode: %s", mode)
+	}
+}
+
 // ConfigToIPVSDestination converts a BackendConfig to a Destination struct.
 func ConfigToIPVSDestination(backendCfg config.BackendConfig) (*Destination, error) {
+	return ConfigToIPVSDestinationWithMode(backendCfg, "nat")
+}
+
+// ConfigToIPVSDestinationWithMode converts a BackendConfig to a Destination struct
+// using the given forwarding mode (nat/dr/tun).
+func ConfigToIPVSDestinationWithMode(backendCfg config.BackendConfig, forwardMode string) (*Destination, error) {
 	host, portStr, err := net.SplitHostPort(backendCfg.Address)
 	if err != nil {
 		return nil, fmt.Errorf("invalid backend address %q: %w", backendCfg.Address, err)
@@ -172,11 +192,16 @@ func ConfigToIPVSDestination(backendCfg config.BackendConfig) (*Destination, err
 
 	family := addressFamilyFromIP(ipAddress)
 
+	flag, err := forwardFlagFromMode(forwardMode)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Destination{
 		Address:         ipAddress,
 		Port:            uint16(port),
 		Weight:          backendCfg.Weight,
-		ConnectionFlags: ConnectionFlagMasq,
+		ConnectionFlags: flag,
 		AddressFamily:   family,
 	}, nil
 }

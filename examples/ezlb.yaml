@@ -3,22 +3,21 @@ global:
   cleanup_on_exit: true      # Remove managed IPVS services and EZLB-SNAT iptables chain on exit (default: true)
   metrics_enabled: true      # Enable Prometheus metrics endpoint (default: true)
   metrics_path: "/metrics"   # Metrics endpoint path (default: /metrics)
+  metrics_interval: 15s      # Prometheus traffic stats poll interval, min 5s (default: 15s)
   log:
-    level: info              # Log level: debug, info, warn, error (default: info)
-    home: ./logs             # Log directory (default: ./logs)
-    max_size: 50             # Max size per log file in MB (default: 50)
-    max_backups: 3           # Max number of old log files to retain (default: 3)
-    max_age: 0               # Max days to retain old log files, 0=no limit (default: 0)
-    compress: false          # Compress rotated log files (default: false)
-    traffic:
-      enabled: true          # Enable traffic collector (default: true)
-      interval: 20s          # Traffic stats collection interval, min 5s (default: 20s)
+    level: info                       # Log level: debug, info, warn, error (default: info)
+    home: ./logs                      # Log directory (default: ./logs)
+    max_size: 50                      # Max size per log file in MB (default: 50)
+    max_backups: 3                    # Max number of old log files to retain (default: 3)
+    max_age: 0                        # Max days to retain old log files, 0=no limit (default: 0)
+    compress: false                   # Compress rotated log files (default: false)
 
 services:
   - name: web-service
     listen: 10.0.0.1:80
     protocol: tcp
     scheduler: wrr
+    forward_mode: nat        # IPVS forwarding mode: nat | dr | tun (default: nat)
     health_check:
       enabled: true
       interval: 5s
@@ -70,7 +69,6 @@ services:
     scheduler: rr
     full_nat: true           # Enable FullNAT (IPVS NAT + iptables SNAT)
     snat_ip: 10.0.0.3        # Source IP for SNAT; omit for MASQUERADE
-    traffic_log: true          # Per-service traffic log: true to enable raw stats logging (default: disabled)
     health_check:
       enabled: false
     backends:

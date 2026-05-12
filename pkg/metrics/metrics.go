@@ -115,31 +115,34 @@ var (
 	)
 )
 
-// SetServiceTraffic updates service-level traffic counters.
-// Note: Prometheus Counter.Add() accepts float64, we convert from uint64.
-func SetServiceTraffic(service, listen, protocol string, connections, bytesIn, bytesOut, packetsIn, packetsOut uint64) {
+// AddServiceTraffic advances service-level Counter metrics by the per-cycle
+// deltas. Callers are responsible for computing curr - prev and passing the
+// difference; passing the absolute cumulative value here would double-count
+// every collection cycle.
+func AddServiceTraffic(service, listen, protocol string, connectionsDelta, bytesInDelta, bytesOutDelta, packetsInDelta, packetsOutDelta uint64) {
 	labels := prometheus.Labels{
 		"service":  service,
 		"listen":   listen,
 		"protocol": protocol,
 	}
-	serviceConnectionsTotal.With(labels).Add(float64(connections))
-	serviceBytesInTotal.With(labels).Add(float64(bytesIn))
-	serviceBytesOutTotal.With(labels).Add(float64(bytesOut))
-	servicePacketsInTotal.With(labels).Add(float64(packetsIn))
-	servicePacketsOutTotal.With(labels).Add(float64(packetsOut))
+	serviceConnectionsTotal.With(labels).Add(float64(connectionsDelta))
+	serviceBytesInTotal.With(labels).Add(float64(bytesInDelta))
+	serviceBytesOutTotal.With(labels).Add(float64(bytesOutDelta))
+	servicePacketsInTotal.With(labels).Add(float64(packetsInDelta))
+	servicePacketsOutTotal.With(labels).Add(float64(packetsOutDelta))
 }
 
-// SetBackendTraffic updates backend-level traffic counters.
-func SetBackendTraffic(service, backend, protocol string, connections, bytesIn, bytesOut uint64) {
+// AddBackendTraffic advances backend-level Counter metrics by the per-cycle
+// deltas. See AddServiceTraffic for the contract.
+func AddBackendTraffic(service, backend, protocol string, connectionsDelta, bytesInDelta, bytesOutDelta uint64) {
 	labels := prometheus.Labels{
 		"service":  service,
 		"backend":  backend,
 		"protocol": protocol,
 	}
-	backendConnectionsTotal.With(labels).Add(float64(connections))
-	backendBytesInTotal.With(labels).Add(float64(bytesIn))
-	backendBytesOutTotal.With(labels).Add(float64(bytesOut))
+	backendConnectionsTotal.With(labels).Add(float64(connectionsDelta))
+	backendBytesInTotal.With(labels).Add(float64(bytesInDelta))
+	backendBytesOutTotal.With(labels).Add(float64(bytesOutDelta))
 }
 
 // SetBackendConnections updates backend-level connection gauges.

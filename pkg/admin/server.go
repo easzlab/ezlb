@@ -69,9 +69,6 @@ func (s *Server) Start() error {
 	// Register health check endpoint
 	mux.HandleFunc("/health", s.handleHealth)
 
-	// Register config reload endpoint (placeholder for future use)
-	mux.HandleFunc("/reload", s.handleReload)
-
 	s.server = &http.Server{
 		Addr:         s.listenAddr,
 		Handler:      mux,
@@ -130,19 +127,6 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	response := fmt.Sprintf(`{"status":"healthy","backends":%s}`, formatHealthJSON(backendHealth))
 	w.Write([]byte(response))
-}
-
-// handleReload handles config reload requests (placeholder).
-func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// TODO: Implement config reload trigger
-	s.logger.Info("config reload requested via admin API")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status":"reload triggered"}`))
 }
 
 // formatHealthJSON converts health map to JSON string.

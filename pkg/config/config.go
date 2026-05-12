@@ -19,22 +19,25 @@ type Config struct {
 
 // GlobalConfig holds global settings.
 type GlobalConfig struct {
-	CleanupOnExit  *bool     `yaml:"cleanup_on_exit" mapstructure:"cleanup_on_exit"`
-	MetricsEnabled *bool     `yaml:"metrics_enabled" mapstructure:"metrics_enabled"`
-	AdminAddress   string    `yaml:"admin_address"   mapstructure:"admin_address"`
-	MetricsPath    string    `yaml:"metrics_path"    mapstructure:"metrics_path"`
-	Log            LogConfig `yaml:"log"            mapstructure:"log"`
+	CleanupOnExit  *bool     `yaml:"cleanup_on_exit"  mapstructure:"cleanup_on_exit"`
+	MetricsEnabled *bool     `yaml:"metrics_enabled"  mapstructure:"metrics_enabled"`
+	AdminAddress   string    `yaml:"admin_address"    mapstructure:"admin_address"`
+	MetricsPath    string    `yaml:"metrics_path"     mapstructure:"metrics_path"`
+	// MetricsInterval controls how often the traffic stats collector polls
+	// IPVS for Prometheus metrics. The collector runs whenever metrics are
+	// enabled (global.metrics_enabled). Minimum 5s, defaults to 15s.
+	MetricsInterval string    `yaml:"metrics_interval" mapstructure:"metrics_interval"`
+	Log            LogConfig `yaml:"log"              mapstructure:"log"`
 }
 
 // LogConfig holds unified logging configuration.
 type LogConfig struct {
-	Traffic    TrafficLogConfig `yaml:"traffic"     mapstructure:"traffic"`
-	Level      string           `yaml:"level"       mapstructure:"level"`
-	Home       string           `yaml:"home"        mapstructure:"home"`
-	MaxSize    int              `yaml:"max_size"    mapstructure:"max_size"`
-	MaxBackups int              `yaml:"max_backups" mapstructure:"max_backups"`
-	MaxAge     int              `yaml:"max_age"     mapstructure:"max_age"`
-	Compress   bool             `yaml:"compress"    mapstructure:"compress"`
+	Level      string `yaml:"level"       mapstructure:"level"`
+	Home       string `yaml:"home"        mapstructure:"home"`
+	MaxSize    int    `yaml:"max_size"    mapstructure:"max_size"`
+	MaxBackups int    `yaml:"max_backups" mapstructure:"max_backups"`
+	MaxAge     int    `yaml:"max_age"     mapstructure:"max_age"`
+	Compress   bool   `yaml:"compress"    mapstructure:"compress"`
 }
 
 // validLogLevels is the set of supported log levels.
@@ -82,27 +85,13 @@ func (l LogConfig) GetMaxAge() int {
 	return l.MaxAge
 }
 
-// TrafficLogConfig holds traffic logging specific configuration.
-type TrafficLogConfig struct {
-	Enabled  *bool  `yaml:"enabled"  mapstructure:"enabled"`
-	Interval string `yaml:"interval" mapstructure:"interval"`
-}
-
-// IsEnabled returns whether traffic logging is enabled. Defaults to true.
-func (t TrafficLogConfig) IsEnabled() bool {
-	if t.Enabled == nil {
-		return true
-	}
-	return *t.Enabled
-}
-
-// GetInterval parses and returns the traffic logging interval.
-// Defaults to 15s. Minimum is 5s; values below 5s are clamped to 5s.
-func (t TrafficLogConfig) GetInterval() time.Duration {
-	if t.Interval == "" {
+// GetMetricsInterval parses and returns the Prometheus traffic stats
+// collection interval. Defaults to 15s; values below 5s are clamped to 5s.
+func (g GlobalConfig) GetMetricsInterval() time.Duration {
+	if g.MetricsInterval == "" {
 		return 15 * time.Second
 	}
-	duration, err := time.ParseDuration(t.Interval)
+	duration, err := time.ParseDuration(g.MetricsInterval)
 	if err != nil {
 		return 15 * time.Second
 	}
@@ -141,15 +130,24 @@ func (g GlobalConfig) GetMetricsPath() string {
 
 // ServiceConfig defines a virtual service with its backends and health check settings.
 type ServiceConfig struct {
-	TrafficLog  *bool             `yaml:"traffic_log"       mapstructure:"traffic_log"`
 	Name        string            `yaml:"name"              mapstructure:"name"`
 	Listen      string            `yaml:"listen"            mapstructure:"listen"`
 	Protocol    string            `yaml:"protocol"          mapstructure:"protocol"`
 	Scheduler   string            `yaml:"scheduler"         mapstructure:"scheduler"`
+	ForwardMode string            `yaml:"forward_mode"      mapstructure:"forward_mode"`
 	SnatIP      string            `yaml:"snat_ip"           mapstructure:"snat_ip"`
 	Backends    []BackendConfig   `yaml:"backends"          mapstructure:"backends"`
 	HealthCheck HealthCheckConfig `yaml:"health_check"      mapstructure:"health_check"`
 	FullNAT     bool              `yaml:"full_nat"          mapstructure:"full_nat"`
+}
+
+// GetForwardMode returns the IPVS forwarding mode.
+// Defaults to "nat" if not set.
+func (s ServiceConfig) GetForwardMode() string {
+	if s.ForwardMode == "" {
+		return "nat"
+	}
+	return s.ForwardMode
 }
 
 // HealthCheckConfig defines per-service health check parameters.
@@ -266,6 +264,13 @@ var validProtocols = map[string]bool{
 	"udp": true,
 }
 
+// validForwardModes is the set of supported IPVS forwarding modes.
+var validForwardModes = map[string]bool{
+	"nat": true,
+	"dr":  true,
+	"tun": true,
+}
+
 // Manager handles configuration loading, validation, and hot-reload.
 type Manager struct {
 	viper      *viper.Viper
@@ -277,23 +282,50 @@ type Manager struct {
 	mu         sync.RWMutex
 }
 
+// applyViperDefaults sets all default values on the given viper instance.
+// This is the single source of truth for config defaults and is shared between
+// NewManager and LoadLogConfig to avoid duplication.
+func applyViperDefaults(v *viper.Viper) {
+	v.SetDefault("global.log.level", "info")
+	v.SetDefault("global.log.home", "./logs")
+	v.SetDefault("global.log.max_size", 50)
+	v.SetDefault("global.log.max_backups", 3)
+	v.SetDefault("global.log.max_age", 0)
+	v.SetDefault("global.log.compress", false)
+	v.SetDefault("global.cleanup_on_exit", true)
+	v.SetDefault("global.metrics_enabled", true)
+	v.SetDefault("global.metrics_path", "/metrics")
+	v.SetDefault("global.metrics_interval", "15s")
+}
+
+// LoadLogConfig reads only the global.log section from the config file.
+// It is used by the entrypoint to build production loggers before the full
+// config Manager is constructed, avoiding a chicken-and-egg dependency on logger.
+func LoadLogConfig(path string) (LogConfig, error) {
+	v := viper.New()
+	v.SetConfigFile(path)
+	applyViperDefaults(v)
+
+	if err := v.ReadInConfig(); err != nil {
+		return LogConfig{}, fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	var wrapper struct {
+		Global struct {
+			Log LogConfig `mapstructure:"log"`
+		} `mapstructure:"global"`
+	}
+	if err := v.Unmarshal(&wrapper); err != nil {
+		return LogConfig{}, fmt.Errorf("failed to unmarshal log config: %w", err)
+	}
+	return wrapper.Global.Log, nil
+}
+
 // NewManager creates a config Manager, loads and validates the initial configuration.
 func NewManager(configPath string, logger *zap.Logger) (*Manager, error) {
 	viperInstance := viper.New()
 	viperInstance.SetConfigFile(configPath)
-
-	// Set defaults
-	viperInstance.SetDefault("global.log.level", "info")
-	viperInstance.SetDefault("global.log.home", "./logs")
-	viperInstance.SetDefault("global.log.max_size", 50)
-	viperInstance.SetDefault("global.log.max_backups", 3)
-	viperInstance.SetDefault("global.log.max_age", 0)
-	viperInstance.SetDefault("global.log.compress", false)
-	viperInstance.SetDefault("global.log.traffic.enabled", true)
-	viperInstance.SetDefault("global.log.traffic.interval", "15s")
-	viperInstance.SetDefault("global.cleanup_on_exit", true)
-	viperInstance.SetDefault("global.metrics_enabled", true)
-	viperInstance.SetDefault("global.metrics_path", "/metrics")
+	applyViperDefaults(viperInstance)
 
 	manager := &Manager{
 		viper:      viperInstance,
@@ -337,14 +369,14 @@ func Validate(cfg *Config) error {
 		return fmt.Errorf("global.log.level: unsupported level %q (supported: debug, info, warn, error)", logLevel)
 	}
 
-	// Validate traffic logging interval
-	if cfg.Global.Log.Traffic.Interval != "" {
-		interval, err := time.ParseDuration(cfg.Global.Log.Traffic.Interval)
+	// Validate Prometheus metrics collection interval
+	if cfg.Global.MetricsInterval != "" {
+		interval, err := time.ParseDuration(cfg.Global.MetricsInterval)
 		if err != nil {
-			return fmt.Errorf("global.log.traffic.interval: invalid duration %q: %w", cfg.Global.Log.Traffic.Interval, err)
+			return fmt.Errorf("global.metrics_interval: invalid duration %q: %w", cfg.Global.MetricsInterval, err)
 		}
 		if interval < 5*time.Second {
-			return fmt.Errorf("global.log.traffic.interval: minimum interval is 5s, got %v", interval)
+			return fmt.Errorf("global.metrics_interval: minimum interval is 5s, got %v", interval)
 		}
 	}
 
@@ -396,6 +428,20 @@ func Validate(cfg *Config) error {
 		// Validate scheduler
 		if !validSchedulers[svc.Scheduler] {
 			return fmt.Errorf("service %q: unsupported scheduler %q (supported: rr, wrr, lc, wlc, dh, sh)", svc.Name, svc.Scheduler)
+		}
+
+		// Validate forward mode (default to nat)
+		forwardMode := svc.ForwardMode
+		if forwardMode == "" {
+			cfg.Services[i].ForwardMode = "nat"
+			forwardMode = "nat"
+		}
+		if !validForwardModes[forwardMode] {
+			return fmt.Errorf("service %q: unsupported forward_mode %q (supported: nat, dr, tun)", svc.Name, forwardMode)
+		}
+		// FullNAT requires NAT forward mode (iptables SNAT requires NAT forwarding)
+		if svc.FullNAT && forwardMode != "nat" {
+			return fmt.Errorf("service %q: full_nat requires forward_mode=nat, got %q", svc.Name, forwardMode)
 		}
 
 		// Validate health check parameters

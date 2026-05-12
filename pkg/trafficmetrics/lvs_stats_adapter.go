@@ -1,4 +1,4 @@
-package trafficlog
+package trafficmetrics
 
 import (
 	"fmt"
@@ -59,14 +59,11 @@ func (a *lvsStatsAdapter) BackendStats() (map[string]BackendTrafficStats, error)
 		for _, dst := range dests {
 			dstKey := lvs.DestinationKeyFromIPVS(dst).String()
 			fullKey := fmt.Sprintf("%s->%s", svcKey, dstKey)
-			activeConnections := connectionCountUint64(dst.ActiveConnections)
-			inactiveConnections := connectionCountUint64(dst.InactiveConnections)
 			result[fullKey] = BackendTrafficStats{
 				ServiceKey:          svcKey,
 				Connections:         uint64(dst.Stats.Connections),
-				ActiveConnections:   activeConnections,
-				InactiveConnections: inactiveConnections,
-				CurrentConnections:  activeConnections + inactiveConnections,
+				ActiveConnections:   connectionCountUint64(dst.ActiveConnections),
+				InactiveConnections: connectionCountUint64(dst.InactiveConnections),
 				InPkts:              uint64(dst.Stats.PacketsIn),
 				OutPkts:             uint64(dst.Stats.PacketsOut),
 				InBytes:             dst.Stats.BytesIn,

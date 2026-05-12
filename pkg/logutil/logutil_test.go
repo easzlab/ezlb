@@ -3,6 +3,7 @@ package logutil
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -10,32 +11,19 @@ import (
 )
 
 func TestBuildLoggers_DefaultConfig(t *testing.T) {
-	// Use a temp directory so we don't pollute the workspace
 	dir := t.TempDir()
-	cfg := config.LogConfig{
-		Home: dir,
-	}
-
-	loggers, err := BuildLoggers(cfg)
+	loggers, err := BuildLoggers(config.LogConfig{Home: dir})
 	if err != nil {
 		t.Fatalf("BuildLoggers failed: %v", err)
 	}
 	if loggers.System == nil {
 		t.Error("expected System logger to be non-nil")
 	}
-	if loggers.Traffic == nil {
-		t.Error("expected Traffic logger to be non-nil")
-	}
 }
 
 func TestBuildLoggers_CreatesLogDir(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "subdir", "logs")
-	cfg := config.LogConfig{
-		Home: dir,
-	}
-
-	_, err := BuildLoggers(cfg)
-	if err != nil {
+	if _, err := BuildLoggers(config.LogConfig{Home: dir}); err != nil {
 		t.Fatalf("BuildLoggers failed: %v", err)
 	}
 
@@ -48,33 +36,64 @@ func TestBuildLoggers_CreatesLogDir(t *testing.T) {
 	}
 }
 
-func TestBuildLoggers_FallbackOnBadHome(t *testing.T) {
-	// Use /dev/null/impossible as an invalid path that cannot be created
-	cfg := config.LogConfig{
-		Home: "/dev/null/impossible/path",
-	}
-
-	loggers, err := BuildLoggers(cfg)
+func TestBuildLoggers_FallbackOnUncreatableHome(t *testing.T) {
+	// /dev/null is a character device on Unix; appending a path under it is
+	// guaranteed to fail os.MkdirAll.
+	loggers, err := BuildLoggers(config.LogConfig{Home: "/dev/null/impossible/path"})
 	if err != nil {
 		t.Fatalf("BuildLoggers should not return error on bad home (fallback to stdout), got: %v", err)
 	}
-	// All loggers should still be non-nil (fallback to stdout)
 	if loggers.System == nil {
 		t.Error("expected System logger to be non-nil even with bad home")
 	}
-	if loggers.Traffic == nil {
-		t.Error("expected Traffic logger to be non-nil even with bad home")
+}
+
+// TestBuildLoggers_FallbackOnReadOnlyDir is the P0-1 #4 regression test:
+// when the log directory exists but is not writable, BuildLoggers must
+// detect this via the write-probe and fall back to stdout-only, not silently
+// drop log lines later via lumberjack.
+func TestBuildLoggers_FallbackOnReadOnlyDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX-style permission bits don't apply on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("read-only directory probing is bypassed by root")
+	}
+
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatalf("chmod failed: %v", err)
+	}
+	t.Cleanup(func() {
+		// Restore writable bit so t.TempDir cleanup can remove the directory.
+		_ = os.Chmod(dir, 0o755)
+	})
+
+	if ensureWritableDir(dir) {
+		t.Fatal("expected ensureWritableDir to return false for read-only dir")
+	}
+
+	loggers, err := BuildLoggers(config.LogConfig{Home: dir})
+	if err != nil {
+		t.Fatalf("BuildLoggers should not return error on read-only home, got: %v", err)
+	}
+	if loggers.System == nil {
+		t.Fatal("expected System logger to be non-nil even on read-only home")
+	}
+
+	// No ezlb.log should be created since the file core was dropped.
+	loggers.System.Info("probe message")
+	loggers.SyncAll()
+
+	if _, err := os.Stat(filepath.Join(dir, "ezlb.log")); !os.IsNotExist(err) {
+		t.Fatalf("expected no ezlb.log to be created in read-only dir, got err=%v", err)
 	}
 }
 
 func TestBuildLoggers_LevelParsing(t *testing.T) {
 	for _, level := range []string{"debug", "info", "warn", "error"} {
 		dir := t.TempDir()
-		cfg := config.LogConfig{
-			Level: level,
-			Home:  dir,
-		}
-		loggers, err := BuildLoggers(cfg)
+		loggers, err := BuildLoggers(config.LogConfig{Level: level, Home: dir})
 		if err != nil {
 			t.Errorf("BuildLoggers failed for level %q: %v", level, err)
 			continue
@@ -86,12 +105,7 @@ func TestBuildLoggers_LevelParsing(t *testing.T) {
 }
 
 func TestBuildLoggers_InvalidLevel(t *testing.T) {
-	cfg := config.LogConfig{
-		Level: "trace",
-		Home:  t.TempDir(),
-	}
-	_, err := BuildLoggers(cfg)
-	if err == nil {
+	if _, err := BuildLoggers(config.LogConfig{Level: "trace", Home: t.TempDir()}); err == nil {
 		t.Fatal("expected error for invalid log level 'trace', got nil")
 	}
 }
@@ -101,109 +115,33 @@ func TestNewBootstrapLogger(t *testing.T) {
 	if logger == nil {
 		t.Fatal("expected NewBootstrapLogger to return non-nil logger")
 	}
-	// Verify it can log without panicking
 	logger.Info("bootstrap test message")
 }
 
 func TestSyncAll(t *testing.T) {
-	dir := t.TempDir()
-	cfg := config.LogConfig{
-		Home: dir,
-	}
-	loggers, err := BuildLoggers(cfg)
+	loggers, err := BuildLoggers(config.LogConfig{Home: t.TempDir()})
 	if err != nil {
 		t.Fatalf("BuildLoggers failed: %v", err)
 	}
-	// SyncAll should not panic
 	loggers.SyncAll()
 }
 
-func TestBuildLoggers_CreatesLogFiles(t *testing.T) {
+func TestBuildLoggers_CreatesLogFile(t *testing.T) {
 	dir := t.TempDir()
-	cfg := config.LogConfig{
-		Home: dir,
-	}
-
-	loggers, err := BuildLoggers(cfg)
+	loggers, err := BuildLoggers(config.LogConfig{Home: dir})
 	if err != nil {
 		t.Fatalf("BuildLoggers failed: %v", err)
 	}
 
-	// Write a message to each logger to trigger file creation
 	loggers.System.Info("system test")
-	loggers.Traffic.Info("traffic test")
 	loggers.SyncAll()
 
-	// Verify log files were created
-	for _, name := range []string{"ezlb.log", "traffic.log"} {
-		path := filepath.Join(dir, name)
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			t.Errorf("expected log file %q to exist", path)
-		}
-	}
-}
-
-func TestBuildLoggers_TrafficFollowsGlobalLevel(t *testing.T) {
-	t.Run("info filters debug traffic entries", func(t *testing.T) {
-		dir := t.TempDir()
-		cfg := config.LogConfig{
-			Level: "info",
-			Home:  dir,
-		}
-
-		loggers, err := BuildLoggers(cfg)
-		if err != nil {
-			t.Fatalf("BuildLoggers failed: %v", err)
-		}
-
-		loggers.Traffic.Debug("traffic hidden at info")
-		loggers.SyncAll()
-
-		assertLogFileMissingOrEmpty(t, filepath.Join(dir, "traffic.log"))
-	})
-
-	t.Run("debug writes debug traffic entries", func(t *testing.T) {
-		dir := t.TempDir()
-		cfg := config.LogConfig{
-			Level: "debug",
-			Home:  dir,
-		}
-
-		loggers, err := BuildLoggers(cfg)
-		if err != nil {
-			t.Fatalf("BuildLoggers failed: %v", err)
-		}
-
-		loggers.Traffic.Debug("traffic visible at debug")
-		loggers.SyncAll()
-
-		assertLogFileContains(t, filepath.Join(dir, "traffic.log"), "traffic visible at debug")
-	})
-}
-
-func assertLogFileMissingOrEmpty(t *testing.T, path string) {
-	t.Helper()
-
+	path := filepath.Join(dir, "ezlb.log")
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return
-		}
-		t.Fatalf("failed to read %q: %v", path, err)
+		t.Fatalf("expected log file %q to exist: %v", path, err)
 	}
-	if len(data) != 0 {
-		t.Fatalf("expected %q to be empty, got %q", path, string(data))
-	}
-}
-
-func assertLogFileContains(t *testing.T, path string, want string) {
-	t.Helper()
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("failed to read %q: %v", path, err)
-	}
-	if !strings.Contains(string(data), want) {
-		t.Fatalf("expected %q to contain %q, got %q", path, want, string(data))
+	if !strings.Contains(string(data), "system test") {
+		t.Fatalf("expected log file to contain test message, got %q", string(data))
 	}
 }

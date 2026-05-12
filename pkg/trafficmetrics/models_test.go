@@ -1,4 +1,4 @@
-package trafficlog
+package trafficmetrics
 
 import (
 	"testing"
@@ -37,7 +37,7 @@ func TestBackendTrafficStats_ZeroValue(t *testing.T) {
 	if stats.ServiceKey != "" {
 		t.Error("zero-value BackendTrafficStats should have empty ServiceKey")
 	}
-	if stats.Connections != 0 || stats.ActiveConnections != 0 || stats.InactiveConnections != 0 || stats.CurrentConnections != 0 || stats.InPkts != 0 || stats.OutPkts != 0 || stats.InBytes != 0 || stats.OutBytes != 0 {
+	if stats.Connections != 0 || stats.ActiveConnections != 0 || stats.InactiveConnections != 0 || stats.InPkts != 0 || stats.OutPkts != 0 || stats.InBytes != 0 || stats.OutBytes != 0 {
 		t.Error("zero-value BackendTrafficStats should have all numeric fields as 0")
 	}
 }
@@ -59,7 +59,6 @@ func TestTrafficSnapshot_PopulateAndRetrieve(t *testing.T) {
 				Connections:         50,
 				ActiveConnections:   3,
 				InactiveConnections: 2,
-				CurrentConnections:  5,
 				InPkts:              100,
 				OutPkts:             75,
 				InBytes:             25000,
@@ -91,7 +90,10 @@ func TestTrafficSnapshot_PopulateAndRetrieve(t *testing.T) {
 	if backendStats.Connections != 50 {
 		t.Errorf("expected 50 connections, got %d", backendStats.Connections)
 	}
-	if backendStats.CurrentConnections != 5 {
-		t.Errorf("expected 5 current connections, got %d", backendStats.CurrentConnections)
+	if backendStats.ActiveConnections != 3 {
+		t.Errorf("expected 3 active connections, got %d", backendStats.ActiveConnections)
+	}
+	if backendStats.InactiveConnections != 2 {
+		t.Errorf("expected 2 inactive connections, got %d", backendStats.InactiveConnections)
 	}
 }
