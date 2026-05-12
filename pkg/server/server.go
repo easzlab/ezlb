@@ -21,15 +21,21 @@ const reconcileDebounceWindow = 200 * time.Millisecond
 
 // Server coordinates all modules and manages the overall service lifecycle.
 type Server struct {
-	configMgr       *config.Manager
-	lvsMgr          *lvs.Manager
-	reconciler      *lvs.Reconciler
-	healthMgr       *healthcheck.Manager
-	snatMgr         snat.Manager
-	adminServer     *admin.Server
-	logger          *zap.Logger
-	collector       *trafficmetrics.Collector
-	reconcileSignal chan struct{}
+	configMgr            *config.Manager
+	lvsMgr               *lvs.Manager
+	reconciler           *lvs.Reconciler
+	healthMgr            *healthcheck.Manager
+	snatMgr              snat.Manager
+	adminServer          *admin.Server
+	logger               *zap.Logger
+	collector            *trafficmetrics.Collector
+	reconcileSignal      chan struct{}
+	prevHealthBackends   map[healthMetricKey]struct{}
+}
+
+type healthMetricKey struct {
+	service string
+	backend string
 }
 
 // NewServer initializes all modules and returns a ready-to-run Server.
@@ -184,7 +190,8 @@ func (s *Server) triggerReconcile() {
 	}
 }
 
-// updateHealthMetrics updates the health status metrics for all backends.
+// updateHealthMetrics updates the health status metrics for all backends
+// and removes stale metrics for backends no longer in the config.
 func (s *Server) updateHealthMetrics() {
 	cfg := s.configMgr.GetConfig()
 	statuses := s.healthMgr.GetAllStatuses()
@@ -197,14 +204,24 @@ func (s *Server) updateHealthMetrics() {
 		}
 	}
 
-	// Update metrics for each backend
+	// Update metrics for each backend and track current keys
+	currentBackends := make(map[healthMetricKey]struct{})
 	for address, healthy := range statuses {
 		serviceName := backendToService[address]
 		if serviceName == "" {
 			serviceName = "unknown"
 		}
 		metrics.SetBackendHealth(serviceName, address, healthy)
+		currentBackends[healthMetricKey{service: serviceName, backend: address}] = struct{}{}
 	}
+
+	// Delete stale health metrics for removed backends
+	for key := range s.prevHealthBackends {
+		if _, exists := currentBackends[key]; !exists {
+			metrics.DeleteBackendHealthMetrics(key.service, key.backend)
+		}
+	}
+	s.prevHealthBackends = currentBackends
 }
 
 // syncTrafficCollector starts the Prometheus traffic stats collector when
@@ -221,7 +238,7 @@ func (s *Server) syncTrafficCollector(cfg *config.Config) {
 			return
 		}
 
-		lvsStats := trafficmetrics.NewLVSStatsAdapter(s.lvsMgr)
+		lvsStats := trafficmetrics.NewLVSStatsAdapter(s.lvsMgr, s.logger.Named("lvsstats"))
 		s.collector = trafficmetrics.NewCollector(
 			lvsStats,
 			s.logger.Named("trafficstats"),
@@ -232,6 +249,13 @@ func (s *Server) syncTrafficCollector(cfg *config.Config) {
 		s.logger.Info("traffic stats collector started",
 			zap.Duration("interval", cfg.Global.GetMetricsInterval()),
 		)
+		return
+	}
+
+	if !cfg.Global.IsMetricsEnabled() {
+		s.collector.Stop()
+		s.collector = nil
+		s.logger.Info("traffic stats collector stopped (metrics disabled)")
 		return
 	}
 

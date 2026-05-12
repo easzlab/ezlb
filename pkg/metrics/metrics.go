@@ -72,6 +72,22 @@ var (
 		[]string{"service", "backend", "protocol"},
 	)
 
+	backendPacketsInTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "ezlb_backend_packets_in_total",
+			Help: "Total incoming packets for a backend",
+		},
+		[]string{"service", "backend", "protocol"},
+	)
+
+	backendPacketsOutTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "ezlb_backend_packets_out_total",
+			Help: "Total outgoing packets for a backend",
+		},
+		[]string{"service", "backend", "protocol"},
+	)
+
 	// Backend-level connection metrics (Gauge)
 	backendActiveConnections = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -134,7 +150,7 @@ func AddServiceTraffic(service, listen, protocol string, connectionsDelta, bytes
 
 // AddBackendTraffic advances backend-level Counter metrics by the per-cycle
 // deltas. See AddServiceTraffic for the contract.
-func AddBackendTraffic(service, backend, protocol string, connectionsDelta, bytesInDelta, bytesOutDelta uint64) {
+func AddBackendTraffic(service, backend, protocol string, connectionsDelta, bytesInDelta, bytesOutDelta, packetsInDelta, packetsOutDelta uint64) {
 	labels := prometheus.Labels{
 		"service":  service,
 		"backend":  backend,
@@ -143,6 +159,8 @@ func AddBackendTraffic(service, backend, protocol string, connectionsDelta, byte
 	backendConnectionsTotal.With(labels).Add(float64(connectionsDelta))
 	backendBytesInTotal.With(labels).Add(float64(bytesInDelta))
 	backendBytesOutTotal.With(labels).Add(float64(bytesOutDelta))
+	backendPacketsInTotal.With(labels).Add(float64(packetsInDelta))
+	backendPacketsOutTotal.With(labels).Add(float64(packetsOutDelta))
 }
 
 // SetBackendConnections updates backend-level connection gauges.
@@ -179,6 +197,14 @@ func IncReconcileErrors() {
 	reconcileErrorsTotal.Inc()
 }
 
+// DeleteBackendHealthMetrics removes the health status metric for a specific backend.
+func DeleteBackendHealthMetrics(service, backend string) {
+	backendHealthStatus.Delete(prometheus.Labels{
+		"service": service,
+		"backend": backend,
+	})
+}
+
 // DeleteBackendMetrics removes all metrics for a specific backend.
 func DeleteBackendMetrics(service, backend, protocol string) {
 	backendLabels := prometheus.Labels{
@@ -189,6 +215,8 @@ func DeleteBackendMetrics(service, backend, protocol string) {
 	backendConnectionsTotal.Delete(backendLabels)
 	backendBytesInTotal.Delete(backendLabels)
 	backendBytesOutTotal.Delete(backendLabels)
+	backendPacketsInTotal.Delete(backendLabels)
+	backendPacketsOutTotal.Delete(backendLabels)
 	backendActiveConnections.Delete(backendLabels)
 	backendInactiveConnections.Delete(backendLabels)
 

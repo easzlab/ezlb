@@ -427,3 +427,82 @@ services:
 		t.Fatal("timed out waiting for server to shut down")
 	}
 }
+
+// --- Flow E: Metrics cleanup on service removal ---
+
+func TestIntegration_MetricsCleanupOnServiceRemoval(t *testing.T) {
+	configYAML := `
+global:
+  log:
+    level: info
+services:
+  - name: web-service
+    listen: 10.0.0.1:80
+    protocol: tcp
+    scheduler: rr
+    health_check:
+      enabled: false
+    backends:
+      - address: 192.168.1.10:8080
+        weight: 5
+      - address: 192.168.1.11:8080
+        weight: 3
+  - name: api-service
+    listen: 10.0.0.2:443
+    protocol: tcp
+    scheduler: rr
+    health_check:
+      enabled: false
+    backends:
+      - address: 192.168.2.10:9090
+        weight: 1
+`
+	dir := t.TempDir()
+	configPath := writeYAMLFile(t, dir, configYAML)
+
+	logger := zap.NewNop()
+	lvsMgr := newTestLVSManager(t)
+	defer lvsMgr.Close()
+
+	snatMgr, _ := snat.NewManager(logger.Named("snat"))
+	healthChecker := newControllableHealthChecker()
+	reconciler := lvs.NewReconciler(lvsMgr, healthChecker, snatMgr, logger)
+
+	configMgr, err := config.NewManager(configPath, logger)
+	if err != nil {
+		t.Fatalf("config.NewManager failed: %v", err)
+	}
+
+	cfg := configMgr.GetConfig()
+
+	// Reconcile with 2 services.
+	if err := reconciler.Reconcile(cfg.Services); err != nil {
+		t.Fatalf("initial Reconcile failed: %v", err)
+	}
+
+	services, _ := lvsMgr.GetServices()
+	if len(services) != 2 {
+		t.Fatalf("expected 2 services initially, got %d", len(services))
+	}
+
+	// Remove api-service, keep only web-service.
+	reducedCfg := []config.ServiceConfig{cfg.Services[0]}
+	if err := reconciler.Reconcile(reducedCfg); err != nil {
+		t.Fatalf("Reconcile after service removal failed: %v", err)
+	}
+
+	services, _ = lvsMgr.GetServices()
+	if len(services) != 1 {
+		t.Fatalf("expected 1 service after removal, got %d", len(services))
+	}
+
+	// Remove remaining web-service.
+	if err := reconciler.Reconcile(nil); err != nil {
+		t.Fatalf("Reconcile with empty config failed: %v", err)
+	}
+
+	services, _ = lvsMgr.GetServices()
+	if len(services) != 0 {
+		t.Fatalf("expected 0 services after full removal, got %d", len(services))
+	}
+}

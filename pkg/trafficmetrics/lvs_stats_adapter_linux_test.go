@@ -33,10 +33,6 @@ func newFlushedLVSManager(t *testing.T) *lvs.Manager {
 	return mgr
 }
 
-// TestLVSStatsAdapter_ServiceStats_Integration verifies that the adapter correctly
-// maps IPVS services to ServiceTrafficStats on real Linux IPVS.
-// Stats values are not asserted because the kernel initialises them to zero
-// for newly created services and they only accumulate from real traffic.
 func TestLVSStatsAdapter_ServiceStats_Integration(t *testing.T) {
 	mgr := newFlushedLVSManager(t)
 
@@ -52,10 +48,10 @@ func TestLVSStatsAdapter_ServiceStats_Integration(t *testing.T) {
 		t.Fatalf("failed to create service: %v", err)
 	}
 
-	adapter := NewLVSStatsAdapter(mgr)
-	stats, err := adapter.ServiceStats()
+	adapter := NewLVSStatsAdapter(mgr, zap.NewNop())
+	stats, _, err := adapter.AllStats()
 	if err != nil {
-		t.Fatalf("ServiceStats() error: %v", err)
+		t.Fatalf("AllStats() error: %v", err)
 	}
 
 	if len(stats) != 1 {
@@ -71,8 +67,6 @@ func TestLVSStatsAdapter_ServiceStats_Integration(t *testing.T) {
 	}
 }
 
-// TestLVSStatsAdapter_BackendStats_Integration verifies that the adapter correctly
-// maps IPVS destinations to BackendTrafficStats on real Linux IPVS.
 func TestLVSStatsAdapter_BackendStats_Integration(t *testing.T) {
 	mgr := newFlushedLVSManager(t)
 
@@ -99,56 +93,47 @@ func TestLVSStatsAdapter_BackendStats_Integration(t *testing.T) {
 		t.Fatalf("failed to create destination: %v", err)
 	}
 
-	adapter := NewLVSStatsAdapter(mgr)
-	stats, err := adapter.BackendStats()
+	adapter := NewLVSStatsAdapter(mgr, zap.NewNop())
+	_, backendStats, err := adapter.AllStats()
 	if err != nil {
-		t.Fatalf("BackendStats() error: %v", err)
+		t.Fatalf("AllStats() error: %v", err)
 	}
 
-	if len(stats) != 1 {
-		t.Fatalf("expected 1 backend, got %d", len(stats))
+	if len(backendStats) != 1 {
+		t.Fatalf("expected 1 backend, got %d", len(backendStats))
 	}
 
 	expectedKey := "10.0.0.1:80/tcp->192.168.1.1:8080"
-	backendStats, ok := stats[expectedKey]
+	stats, ok := backendStats[expectedKey]
 	if !ok {
-		for k := range stats {
+		for k := range backendStats {
 			t.Logf("actual key: %q", k)
 		}
 		t.Fatalf("expected key %q not found", expectedKey)
 	}
 
-	if backendStats.ServiceKey != "10.0.0.1:80/tcp" {
-		t.Errorf("expected ServiceKey='10.0.0.1:80/tcp', got %q", backendStats.ServiceKey)
+	if stats.ServiceKey != "10.0.0.1:80/tcp" {
+		t.Errorf("expected ServiceKey='10.0.0.1:80/tcp', got %q", stats.ServiceKey)
 	}
 }
 
-// TestLVSStatsAdapter_EmptyServices_Integration verifies that the adapter returns
-// empty maps when no IPVS services exist.
 func TestLVSStatsAdapter_EmptyServices_Integration(t *testing.T) {
 	mgr := newFlushedLVSManager(t)
 
-	adapter := NewLVSStatsAdapter(mgr)
+	adapter := NewLVSStatsAdapter(mgr, zap.NewNop())
 
-	svcStats, err := adapter.ServiceStats()
+	svcStats, backendStats, err := adapter.AllStats()
 	if err != nil {
-		t.Fatalf("ServiceStats() error: %v", err)
+		t.Fatalf("AllStats() error: %v", err)
 	}
 	if len(svcStats) != 0 {
 		t.Errorf("expected 0 services, got %d", len(svcStats))
-	}
-
-	backendStats, err := adapter.BackendStats()
-	if err != nil {
-		t.Fatalf("BackendStats() error: %v", err)
 	}
 	if len(backendStats) != 0 {
 		t.Errorf("expected 0 backends, got %d", len(backendStats))
 	}
 }
 
-// TestLVSStatsAdapter_MultipleServicesAndBackends_Integration verifies that the adapter
-// correctly handles multiple services and backends on real Linux IPVS.
 func TestLVSStatsAdapter_MultipleServicesAndBackends_Integration(t *testing.T) {
 	mgr := newFlushedLVSManager(t)
 
@@ -197,19 +182,14 @@ func TestLVSStatsAdapter_MultipleServicesAndBackends_Integration(t *testing.T) {
 		t.Fatalf("failed to create destination2: %v", err)
 	}
 
-	adapter := NewLVSStatsAdapter(mgr)
+	adapter := NewLVSStatsAdapter(mgr, zap.NewNop())
 
-	svcStats, err := adapter.ServiceStats()
+	svcStats, backendStats, err := adapter.AllStats()
 	if err != nil {
-		t.Fatalf("ServiceStats() error: %v", err)
+		t.Fatalf("AllStats() error: %v", err)
 	}
 	if len(svcStats) != 2 {
 		t.Fatalf("expected 2 services, got %d", len(svcStats))
-	}
-
-	backendStats, err := adapter.BackendStats()
-	if err != nil {
-		t.Fatalf("BackendStats() error: %v", err)
 	}
 	if len(backendStats) != 2 {
 		t.Fatalf("expected 2 backends, got %d", len(backendStats))

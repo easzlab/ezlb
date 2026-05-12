@@ -78,6 +78,94 @@ services:
 	}
 }
 
+func TestServerSyncTrafficCollectorStopsWhenMetricsDisabled(t *testing.T) {
+	enabledYAML := `
+global:
+  log:
+    level: info
+  metrics_enabled: true
+services:
+  - name: web-service
+    listen: 10.0.0.1:80
+    protocol: tcp
+    scheduler: rr
+    health_check:
+      enabled: false
+    backends:
+      - address: 192.168.1.10:8080
+        weight: 1
+`
+	configPath := writeYAMLFile(t, t.TempDir(), enabledYAML)
+
+	srv := newTestServer(t, configPath)
+	t.Cleanup(func() {
+		srv.shutdown()
+	})
+
+	// Start collector with metrics enabled.
+	cfg := srv.configMgr.GetConfig()
+	srv.syncTrafficCollector(cfg)
+	if srv.collector == nil {
+		t.Fatal("expected collector to be created when metrics are enabled")
+	}
+
+	// Simulate hot-reload: metrics_enabled -> false.
+	disabled := false
+	cfg.Global.MetricsEnabled = &disabled
+	srv.syncTrafficCollector(cfg)
+	if srv.collector != nil {
+		t.Fatal("expected collector to be nil after metrics disabled via hot-reload")
+	}
+}
+
+func TestServerSyncTrafficCollectorRestartsAfterReEnabled(t *testing.T) {
+	enabledYAML := `
+global:
+  log:
+    level: info
+  metrics_enabled: true
+services:
+  - name: web-service
+    listen: 10.0.0.1:80
+    protocol: tcp
+    scheduler: rr
+    health_check:
+      enabled: false
+    backends:
+      - address: 192.168.1.10:8080
+        weight: 1
+`
+	configPath := writeYAMLFile(t, t.TempDir(), enabledYAML)
+
+	srv := newTestServer(t, configPath)
+	t.Cleanup(func() {
+		srv.shutdown()
+	})
+
+	// Start collector.
+	cfg := srv.configMgr.GetConfig()
+	srv.syncTrafficCollector(cfg)
+	if srv.collector == nil {
+		t.Fatal("expected collector to be created")
+	}
+
+	// Disable.
+	disabled := false
+	cfg.Global.MetricsEnabled = &disabled
+	srv.syncTrafficCollector(cfg)
+	if srv.collector != nil {
+		t.Fatal("expected collector to be stopped")
+	}
+
+	// Re-enable.
+	enabled := true
+	cfg.Global.MetricsEnabled = &enabled
+	srv.syncTrafficCollector(cfg)
+	if srv.collector == nil {
+		t.Fatal("expected collector to be re-created after re-enabling metrics")
+	}
+}
+
 func TestRunOnceLogsKernelParameterMismatches(t *testing.T) {
 	configYAML := `
 global:

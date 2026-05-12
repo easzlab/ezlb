@@ -12,7 +12,6 @@ import (
 )
 
 func TestLVSStatsAdapter_ServiceStats(t *testing.T) {
-	// Create a Manager with fake handle and add a service with stats
 	mgr, err := lvs.NewManager(zap.NewNop())
 	if err != nil {
 		t.Fatalf("failed to create LVS manager: %v", err)
@@ -38,31 +37,25 @@ func TestLVSStatsAdapter_ServiceStats(t *testing.T) {
 		t.Fatalf("failed to create service: %v", err)
 	}
 
-	adapter := NewLVSStatsAdapter(mgr)
-	stats, err := adapter.ServiceStats()
+	adapter := NewLVSStatsAdapter(mgr, zap.NewNop())
+	stats, _, err := adapter.AllStats()
 	if err != nil {
-		t.Fatalf("ServiceStats() error: %v", err)
+		t.Fatalf("AllStats() error: %v", err)
 	}
 
 	if len(stats) != 1 {
 		t.Fatalf("expected 1 service, got %d", len(stats))
 	}
 
-	// The key format is "ip:port/protocol"
 	expectedKey := "10.0.0.1:80/tcp"
 	svcStats, ok := stats[expectedKey]
 	if !ok {
-		// Print actual keys for debugging
 		for k := range stats {
 			t.Logf("actual key: %q", k)
 		}
 		t.Fatalf("expected key %q not found", expectedKey)
 	}
 
-	// Note: fakeHandle stores the service but GetServices returns a clone.
-	// The stats in the clone come from the original service's Stats field.
-	// However, fakeHandle's cloneService copies Stats directly, so the values
-	// should match what we set above.
 	if svcStats.Connections != 100 {
 		t.Errorf("expected Connections=100, got %d", svcStats.Connections)
 	}
@@ -119,49 +112,48 @@ func TestLVSStatsAdapter_BackendStats(t *testing.T) {
 		t.Fatalf("failed to create destination: %v", err)
 	}
 
-	adapter := NewLVSStatsAdapter(mgr)
-	stats, err := adapter.BackendStats()
+	adapter := NewLVSStatsAdapter(mgr, zap.NewNop())
+	_, backendStats, err := adapter.AllStats()
 	if err != nil {
-		t.Fatalf("BackendStats() error: %v", err)
+		t.Fatalf("AllStats() error: %v", err)
 	}
 
-	if len(stats) != 1 {
-		t.Fatalf("expected 1 backend, got %d", len(stats))
+	if len(backendStats) != 1 {
+		t.Fatalf("expected 1 backend, got %d", len(backendStats))
 	}
 
-	// Key format: "svcKey->dstKey"
 	expectedKey := "10.0.0.1:80/tcp->192.168.1.1:8080"
-	backendStats, ok := stats[expectedKey]
+	stats, ok := backendStats[expectedKey]
 	if !ok {
-		for k := range stats {
+		for k := range backendStats {
 			t.Logf("actual key: %q", k)
 		}
 		t.Fatalf("expected key %q not found", expectedKey)
 	}
 
-	if backendStats.ServiceKey != "10.0.0.1:80/tcp" {
-		t.Errorf("expected ServiceKey='10.0.0.1:80/tcp', got %q", backendStats.ServiceKey)
+	if stats.ServiceKey != "10.0.0.1:80/tcp" {
+		t.Errorf("expected ServiceKey='10.0.0.1:80/tcp', got %q", stats.ServiceKey)
 	}
-	if backendStats.Connections != 50 {
-		t.Errorf("expected Connections=50, got %d", backendStats.Connections)
+	if stats.Connections != 50 {
+		t.Errorf("expected Connections=50, got %d", stats.Connections)
 	}
-	if backendStats.ActiveConnections != 7 {
-		t.Errorf("expected ActiveConnections=7, got %d", backendStats.ActiveConnections)
+	if stats.ActiveConnections != 7 {
+		t.Errorf("expected ActiveConnections=7, got %d", stats.ActiveConnections)
 	}
-	if backendStats.InactiveConnections != 3 {
-		t.Errorf("expected InactiveConnections=3, got %d", backendStats.InactiveConnections)
+	if stats.InactiveConnections != 3 {
+		t.Errorf("expected InactiveConnections=3, got %d", stats.InactiveConnections)
 	}
-	if backendStats.InPkts != 100 {
-		t.Errorf("expected InPkts=100, got %d", backendStats.InPkts)
+	if stats.InPkts != 100 {
+		t.Errorf("expected InPkts=100, got %d", stats.InPkts)
 	}
-	if backendStats.OutPkts != 75 {
-		t.Errorf("expected OutPkts=75, got %d", backendStats.OutPkts)
+	if stats.OutPkts != 75 {
+		t.Errorf("expected OutPkts=75, got %d", stats.OutPkts)
 	}
-	if backendStats.InBytes != 25000 {
-		t.Errorf("expected InBytes=25000, got %d", backendStats.InBytes)
+	if stats.InBytes != 25000 {
+		t.Errorf("expected InBytes=25000, got %d", stats.InBytes)
 	}
-	if backendStats.OutBytes != 15000 {
-		t.Errorf("expected OutBytes=15000, got %d", backendStats.OutBytes)
+	if stats.OutBytes != 15000 {
+		t.Errorf("expected OutBytes=15000, got %d", stats.OutBytes)
 	}
 }
 
@@ -172,21 +164,14 @@ func TestLVSStatsAdapter_EmptyServices(t *testing.T) {
 	}
 	defer mgr.Close()
 
-	adapter := NewLVSStatsAdapter(mgr)
+	adapter := NewLVSStatsAdapter(mgr, zap.NewNop())
 
-	// ServiceStats should return empty map
-	svcStats, err := adapter.ServiceStats()
+	svcStats, backendStats, err := adapter.AllStats()
 	if err != nil {
-		t.Fatalf("ServiceStats() error: %v", err)
+		t.Fatalf("AllStats() error: %v", err)
 	}
 	if len(svcStats) != 0 {
 		t.Errorf("expected 0 services, got %d", len(svcStats))
-	}
-
-	// BackendStats should return empty map
-	backendStats, err := adapter.BackendStats()
-	if err != nil {
-		t.Fatalf("BackendStats() error: %v", err)
 	}
 	if len(backendStats) != 0 {
 		t.Errorf("expected 0 backends, got %d", len(backendStats))
@@ -200,7 +185,6 @@ func TestLVSStatsAdapter_MultipleServicesAndBackends(t *testing.T) {
 	}
 	defer mgr.Close()
 
-	// Create two services
 	svc1 := &lvs.Service{
 		Address:       net.ParseIP("10.0.0.1").To4(),
 		Port:          80,
@@ -233,7 +217,6 @@ func TestLVSStatsAdapter_MultipleServicesAndBackends(t *testing.T) {
 		t.Fatalf("failed to create service2: %v", err)
 	}
 
-	// Add backends to svc1
 	dst1 := &lvs.Destination{
 		Address:         net.ParseIP("192.168.1.1").To4(),
 		Port:            8080,
@@ -255,21 +238,14 @@ func TestLVSStatsAdapter_MultipleServicesAndBackends(t *testing.T) {
 		t.Fatalf("failed to create destination2: %v", err)
 	}
 
-	adapter := NewLVSStatsAdapter(mgr)
+	adapter := NewLVSStatsAdapter(mgr, zap.NewNop())
 
-	// Verify service stats
-	svcStats, err := adapter.ServiceStats()
+	svcStats, backendStats, err := adapter.AllStats()
 	if err != nil {
-		t.Fatalf("ServiceStats() error: %v", err)
+		t.Fatalf("AllStats() error: %v", err)
 	}
 	if len(svcStats) != 2 {
 		t.Fatalf("expected 2 services, got %d", len(svcStats))
-	}
-
-	// Verify backend stats
-	backendStats, err := adapter.BackendStats()
-	if err != nil {
-		t.Fatalf("BackendStats() error: %v", err)
 	}
 	if len(backendStats) != 2 {
 		t.Fatalf("expected 2 backends, got %d", len(backendStats))

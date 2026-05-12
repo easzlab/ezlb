@@ -19,6 +19,15 @@ type HealthChecker interface {
 	IsHealthy(address string) bool
 }
 
+// managedServiceInfo stores config metadata for a managed service,
+// used to clean up Prometheus metrics when the service is removed.
+type managedServiceInfo struct {
+	Name     string
+	Listen   string
+	Protocol string
+	Backends []string // backend addresses
+}
+
 // Reconciler implements declarative reconciliation between desired state (config + health)
 // and actual state (IPVS kernel rules + iptables SNAT rules).
 type Reconciler struct {
@@ -26,7 +35,7 @@ type Reconciler struct {
 	healthMgr HealthChecker
 	snatMgr   snat.Manager
 	logger    *zap.Logger
-	managed   map[ServiceKey]bool // tracks services managed by ezlb
+	managed   map[ServiceKey]*managedServiceInfo // tracks services managed by ezlb
 	mu        sync.Mutex
 }
 
@@ -37,7 +46,7 @@ func NewReconciler(manager *Manager, healthMgr HealthChecker, snatMgr snat.Manag
 		healthMgr: healthMgr,
 		snatMgr:   snatMgr,
 		logger:    logger,
-		managed:   make(map[ServiceKey]bool),
+		managed:   make(map[ServiceKey]*managedServiceInfo),
 	}
 }
 
@@ -75,7 +84,7 @@ func (r *Reconciler) Reconcile(desiredConfigs []config.ServiceConfig) error {
 		// desired state. This ensures that `once` mode (fresh Reconciler with
 		// empty managed map) can still detect and update pre-existing IPVS
 		// services that match the current config, avoiding duplicate creation.
-		if r.managed[key] || desiredMap[key] != nil {
+		if r.managed[key] != nil || desiredMap[key] != nil {
 			actualMap[key] = svc
 		}
 	}
@@ -92,10 +101,10 @@ func (r *Reconciler) Reconcile(desiredConfigs []config.ServiceConfig) error {
 				reconcileErrors = append(reconcileErrors, fmt.Errorf("create service %s: %w", key, err))
 				continue
 			}
-			r.managed[key] = true
+			r.managed[key] = newManagedServiceInfo(desired.config)
 		} else {
 			// Service exists -> mark as managed and check if scheduler needs update
-			r.managed[key] = true
+			r.managed[key] = newManagedServiceInfo(desired.config)
 			if actual.SchedName != desired.service.SchedName {
 				if err := r.manager.UpdateService(desired.service); err != nil {
 					reconcileErrors = append(reconcileErrors, fmt.Errorf("update service %s: %w", key, err))
@@ -116,6 +125,12 @@ func (r *Reconciler) Reconcile(desiredConfigs []config.ServiceConfig) error {
 			if err := r.manager.DeleteService(actual); err != nil {
 				reconcileErrors = append(reconcileErrors, fmt.Errorf("delete service %s: %w", key, err))
 			} else {
+				if info := r.managed[key]; info != nil {
+					metrics.DeleteServiceMetrics(info.Name, info.Listen, info.Protocol)
+					for _, backend := range info.Backends {
+						metrics.DeleteBackendMetrics(info.Name, backend, info.Protocol)
+					}
+				}
 				delete(r.managed, key)
 			}
 		}
@@ -175,6 +190,19 @@ func (r *Reconciler) Cleanup() error {
 	}
 	r.logger.Info("cleaned up all managed IPVS services")
 	return nil
+}
+
+func newManagedServiceInfo(cfg config.ServiceConfig) *managedServiceInfo {
+	backends := make([]string, len(cfg.Backends))
+	for i, b := range cfg.Backends {
+		backends[i] = b.Address
+	}
+	return &managedServiceInfo{
+		Name:     cfg.Name,
+		Listen:   cfg.Listen,
+		Protocol: cfg.Protocol,
+		Backends: backends,
+	}
 }
 
 // reconcileSNAT builds the desired SNAT and FORWARD rules from configs with
@@ -332,6 +360,8 @@ func (r *Reconciler) reconcileDestinations(desired *desiredService) error {
 		if _, exists := desiredDestMap[key]; !exists {
 			if err := r.manager.DeleteDestination(desired.service, actualDst); err != nil {
 				reconcileErrors = append(reconcileErrors, fmt.Errorf("delete destination %s: %w", key, err))
+			} else {
+				metrics.DeleteBackendMetrics(desired.config.Name, key.String(), desired.config.Protocol)
 			}
 		}
 	}

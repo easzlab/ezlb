@@ -40,6 +40,5 @@ type TrafficSnapshot struct {
 
 // LVSStatsProvider abstracts IPVS statistics retrieval.
 type LVSStatsProvider interface {
-	ServiceStats() (map[string]ServiceTrafficStats, error)
-	BackendStats() (map[string]BackendTrafficStats, error)
+	AllStats() (services map[string]ServiceTrafficStats, backends map[string]BackendTrafficStats, err error)
 }

@@ -4,62 +4,56 @@ import (
 	"fmt"
 
 	"github.com/easzlab/ezlb/pkg/lvs"
+	"go.uber.org/zap"
 )
 
 // lvsStatsAdapter implements LVSStatsProvider by adapting lvs.Manager.
-// It reuses GetServices() and GetDestinations() to retrieve statistics
-// without modifying the IPVSHandle interface.
+// It calls GetServices() once per collection cycle and fans out to
+// GetDestinations() for each service, avoiding redundant netlink round-trips.
 type lvsStatsAdapter struct {
 	manager *lvs.Manager
+	logger  *zap.Logger
 }
 
 // NewLVSStatsAdapter creates an LVSStatsProvider backed by lvs.Manager.
-func NewLVSStatsAdapter(mgr *lvs.Manager) LVSStatsProvider {
-	return &lvsStatsAdapter{manager: mgr}
+func NewLVSStatsAdapter(mgr *lvs.Manager, logger *zap.Logger) LVSStatsProvider {
+	return &lvsStatsAdapter{manager: mgr, logger: logger}
 }
 
-// ServiceStats retrieves cumulative statistics for all IPVS services.
-func (a *lvsStatsAdapter) ServiceStats() (map[string]ServiceTrafficStats, error) {
+// AllStats retrieves cumulative statistics for all IPVS services and backends
+// in a single pass, calling GetServices() only once.
+// Individual service destination failures are logged and skipped.
+func (a *lvsStatsAdapter) AllStats() (map[string]ServiceTrafficStats, map[string]BackendTrafficStats, error) {
 	services, err := a.manager.GetServices()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get IPVS services: %w", err)
+		return nil, nil, fmt.Errorf("failed to get IPVS services: %w", err)
 	}
 
-	result := make(map[string]ServiceTrafficStats, len(services))
+	svcResult := make(map[string]ServiceTrafficStats, len(services))
+	backendResult := make(map[string]BackendTrafficStats)
+
 	for _, svc := range services {
-		key := lvs.ServiceKeyFromIPVS(svc).String()
-		result[key] = ServiceTrafficStats{
+		svcKey := lvs.ServiceKeyFromIPVS(svc).String()
+
+		svcResult[svcKey] = ServiceTrafficStats{
 			Connections: uint64(svc.Stats.Connections),
 			InPkts:      uint64(svc.Stats.PacketsIn),
 			OutPkts:     uint64(svc.Stats.PacketsOut),
 			InBytes:     svc.Stats.BytesIn,
 			OutBytes:    svc.Stats.BytesOut,
 		}
-	}
-	return result, nil
-}
-
-// BackendStats retrieves cumulative statistics for all IPVS backends (destinations).
-// The key format is "svcKey->dstKey" to uniquely identify each backend across services.
-func (a *lvsStatsAdapter) BackendStats() (map[string]BackendTrafficStats, error) {
-	services, err := a.manager.GetServices()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get IPVS services: %w", err)
-	}
-
-	result := make(map[string]BackendTrafficStats)
-	for _, svc := range services {
-		svcKey := lvs.ServiceKeyFromIPVS(svc).String()
 
 		dests, err := a.manager.GetDestinations(svc)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get destinations for service %s: %w", svcKey, err)
+			a.logger.Warn("failed to get destinations, skipping service",
+				zap.String("service", svcKey), zap.Error(err))
+			continue
 		}
 
 		for _, dst := range dests {
 			dstKey := lvs.DestinationKeyFromIPVS(dst).String()
 			fullKey := fmt.Sprintf("%s->%s", svcKey, dstKey)
-			result[fullKey] = BackendTrafficStats{
+			backendResult[fullKey] = BackendTrafficStats{
 				ServiceKey:          svcKey,
 				Connections:         uint64(dst.Stats.Connections),
 				ActiveConnections:   connectionCountUint64(dst.ActiveConnections),
@@ -71,7 +65,7 @@ func (a *lvsStatsAdapter) BackendStats() (map[string]BackendTrafficStats, error)
 			}
 		}
 	}
-	return result, nil
+	return svcResult, backendResult, nil
 }
 
 func connectionCountUint64(n int) uint64 {

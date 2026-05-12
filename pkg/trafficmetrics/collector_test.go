@@ -13,22 +13,14 @@ import (
 type fakeLVSStatsProvider struct {
 	serviceStats map[string]ServiceTrafficStats
 	backendStats map[string]BackendTrafficStats
-	serviceErr   error
-	backendErr   error
+	err          error
 }
 
-func (f *fakeLVSStatsProvider) ServiceStats() (map[string]ServiceTrafficStats, error) {
-	if f.serviceErr != nil {
-		return nil, f.serviceErr
+func (f *fakeLVSStatsProvider) AllStats() (map[string]ServiceTrafficStats, map[string]BackendTrafficStats, error) {
+	if f.err != nil {
+		return nil, nil, f.err
 	}
-	return f.serviceStats, nil
-}
-
-func (f *fakeLVSStatsProvider) BackendStats() (map[string]BackendTrafficStats, error) {
-	if f.backendErr != nil {
-		return nil, f.backendErr
-	}
-	return f.backendStats, nil
+	return f.serviceStats, f.backendStats, nil
 }
 
 func newTestGlobalConfig(interval string) config.GlobalConfig {
@@ -118,7 +110,7 @@ func TestBuildServiceConfigMap(t *testing.T) {
 
 func TestCollector_StatsProviderError(t *testing.T) {
 	lvsProvider := &fakeLVSStatsProvider{
-		serviceErr: fmt.Errorf("ipvs connection failed"),
+		err: fmt.Errorf("ipvs connection failed"),
 	}
 
 	c := NewCollector(lvsProvider, zap.NewNop(), nil, newTestGlobalConfig("15s"))
@@ -211,5 +203,66 @@ func TestExtractBackendAddress(t *testing.T) {
 				t.Errorf("extractBackendAddress(%q) = %q, want %q", tt.input, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestCollector_BackendPacketsDelta(t *testing.T) {
+	lvsProvider := &fakeLVSStatsProvider{
+		serviceStats: map[string]ServiceTrafficStats{
+			"10.0.0.1:80/tcp": {Connections: 10},
+		},
+		backendStats: map[string]BackendTrafficStats{
+			"10.0.0.1:80/tcp->192.168.1.1:8080": {
+				ServiceKey:  "10.0.0.1:80/tcp",
+				Connections: 50,
+				InPkts:      100,
+				OutPkts:     75,
+				InBytes:     25000,
+				OutBytes:    15000,
+			},
+		},
+	}
+
+	services := []config.ServiceConfig{
+		newTestServiceConfig("web", "10.0.0.1:80", "tcp", "rr"),
+	}
+
+	c := NewCollector(lvsProvider, zap.NewNop(), services, newTestGlobalConfig("15s"))
+
+	// First cycle: establishes baseline.
+	c.collect()
+
+	c.mu.RLock()
+	if c.prev == nil {
+		c.mu.RUnlock()
+		t.Fatal("expected prev snapshot after first collect()")
+	}
+	prevBackend := c.prev.Backends["10.0.0.1:80/tcp->192.168.1.1:8080"]
+	c.mu.RUnlock()
+
+	if prevBackend.InPkts != 100 {
+		t.Errorf("expected first snapshot InPkts=100, got %d", prevBackend.InPkts)
+	}
+
+	// Second cycle: advance counters.
+	lvsProvider.backendStats["10.0.0.1:80/tcp->192.168.1.1:8080"] = BackendTrafficStats{
+		ServiceKey:  "10.0.0.1:80/tcp",
+		Connections: 80,
+		InPkts:      160,
+		OutPkts:     120,
+		InBytes:     40000,
+		OutBytes:    30000,
+	}
+	c.collect()
+
+	c.mu.RLock()
+	secondBackend := c.prev.Backends["10.0.0.1:80/tcp->192.168.1.1:8080"]
+	c.mu.RUnlock()
+
+	if secondBackend.InPkts != 160 {
+		t.Errorf("expected second snapshot InPkts=160, got %d", secondBackend.InPkts)
+	}
+	if secondBackend.OutPkts != 120 {
+		t.Errorf("expected second snapshot OutPkts=120, got %d", secondBackend.OutPkts)
 	}
 }

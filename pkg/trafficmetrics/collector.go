@@ -114,26 +114,16 @@ func (c *Collector) collect() {
 
 // gatherSnapshot collects current statistics from all providers.
 func (c *Collector) gatherSnapshot() *TrafficSnapshot {
-	snapshot := &TrafficSnapshot{
-		Services: make(map[string]ServiceTrafficStats),
-		Backends: make(map[string]BackendTrafficStats),
-	}
-
-	svcStats, err := c.lvsStats.ServiceStats()
+	svcStats, backendStats, err := c.lvsStats.AllStats()
 	if err != nil {
-		c.logger.Warn("failed to collect IPVS service stats", zap.Error(err))
-	} else {
-		snapshot.Services = svcStats
+		c.logger.Warn("failed to collect IPVS stats", zap.Error(err))
+		return nil
 	}
 
-	backendStats, err := c.lvsStats.BackendStats()
-	if err != nil {
-		c.logger.Warn("failed to collect IPVS backend stats", zap.Error(err))
-	} else {
-		snapshot.Backends = backendStats
+	return &TrafficSnapshot{
+		Services: svcStats,
+		Backends: backendStats,
 	}
-
-	return snapshot
 }
 
 // buildServiceConfigMap builds a lookup map from service key (listen/protocol format)
@@ -208,6 +198,8 @@ func (c *Collector) updateMetrics(snapshot *TrafficSnapshot) {
 			counterDelta(stats.Connections, prevStats.Connections),
 			counterDelta(stats.InBytes, prevStats.InBytes),
 			counterDelta(stats.OutBytes, prevStats.OutBytes),
+			counterDelta(stats.InPkts, prevStats.InPkts),
+			counterDelta(stats.OutPkts, prevStats.OutPkts),
 		)
 
 		metrics.SetBackendConnections(

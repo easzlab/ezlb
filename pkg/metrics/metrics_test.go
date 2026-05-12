@@ -57,12 +57,17 @@ func TestAddBackendTraffic_AccumulatesDeltas(t *testing.T) {
 		protocol = "tcp"
 	)
 
-	AddBackendTraffic(svc, backend, protocol, 10, 1000, 2000)
-	AddBackendTraffic(svc, backend, protocol, 5, 500, 1000)
+	AddBackendTraffic(svc, backend, protocol, 10, 1000, 2000, 5, 3)
+	AddBackendTraffic(svc, backend, protocol, 5, 500, 1000, 2, 1)
 
 	got := testutil.ToFloat64(backendConnectionsTotal.With(labelsForBackend(svc, backend, protocol)))
 	if got != 15 {
 		t.Errorf("expected backend connections counter = 15 (10+5), got %v", got)
+	}
+
+	gotPktsIn := testutil.ToFloat64(backendPacketsInTotal.With(labelsForBackend(svc, backend, protocol)))
+	if gotPktsIn != 7 {
+		t.Errorf("expected backend packets_in counter = 7 (5+2), got %v", gotPktsIn)
 	}
 
 	t.Cleanup(func() { DeleteBackendMetrics(svc, backend, protocol) })
@@ -137,7 +142,7 @@ func TestDeleteBackendMetrics(t *testing.T) {
 		protocol = "tcp"
 	)
 
-	AddBackendTraffic(svc, backend, protocol, 10, 100, 200)
+	AddBackendTraffic(svc, backend, protocol, 10, 100, 200, 5, 3)
 	SetBackendConnections(svc, backend, protocol, 5, 2)
 	SetBackendHealth(svc, backend, true)
 
@@ -169,4 +174,52 @@ func TestDeleteServiceMetrics(t *testing.T) {
 	}
 
 	t.Cleanup(func() { DeleteServiceMetrics(svc, listen, protocol) })
+}
+
+func TestDeleteBackendHealthMetrics(t *testing.T) {
+	const (
+		svc     = "metrics-test-delete-health"
+		backend = "192.168.1.10:8080"
+	)
+
+	SetBackendHealth(svc, backend, true)
+	labels := prometheus.Labels{"service": svc, "backend": backend}
+	if got := testutil.ToFloat64(backendHealthStatus.With(labels)); got != 1 {
+		t.Errorf("expected health=1 before delete, got %v", got)
+	}
+
+	DeleteBackendHealthMetrics(svc, backend)
+
+	// After deletion, re-accessing the gauge recreates it at zero.
+	if got := testutil.ToFloat64(backendHealthStatus.With(labels)); got != 0 {
+		t.Errorf("expected health=0 after delete (recreated), got %v", got)
+	}
+
+	t.Cleanup(func() { backendHealthStatus.Delete(labels) })
+}
+
+func TestDeleteBackendMetrics_IncludesPackets(t *testing.T) {
+	const (
+		svc      = "metrics-test-delete-backend-pkts"
+		backend  = "192.168.1.20:9090"
+		protocol = "tcp"
+	)
+
+	AddBackendTraffic(svc, backend, protocol, 10, 100, 200, 30, 20)
+
+	labels := labelsForBackend(svc, backend, protocol)
+	if got := testutil.ToFloat64(backendPacketsInTotal.With(labels)); got != 30 {
+		t.Errorf("expected packets_in=30 before delete, got %v", got)
+	}
+
+	DeleteBackendMetrics(svc, backend, protocol)
+
+	if got := testutil.ToFloat64(backendPacketsInTotal.With(labels)); got != 0 {
+		t.Errorf("expected packets_in=0 after delete (recreated), got %v", got)
+	}
+	if got := testutil.ToFloat64(backendPacketsOutTotal.With(labels)); got != 0 {
+		t.Errorf("expected packets_out=0 after delete (recreated), got %v", got)
+	}
+
+	t.Cleanup(func() { DeleteBackendMetrics(svc, backend, protocol) })
 }
