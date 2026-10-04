@@ -18,6 +18,7 @@ type Server struct {
 	logger          *zap.Logger
 	server          *http.Server
 	healthCheckFunc func() map[string]bool
+	readyCheckFunc  func() bool
 	listenAddr      string
 	actualAddr      string
 	metricsPath     string
@@ -46,6 +47,12 @@ func (s *Server) SetHealthCheckFunc(fn func() map[string]bool) {
 	s.healthCheckFunc = fn
 }
 
+// SetReadyCheckFunc sets the function that reports whether the latest data-plane
+// reconcile succeeded.
+func (s *Server) SetReadyCheckFunc(fn func() bool) {
+	s.readyCheckFunc = fn
+}
+
 // Start starts the admin HTTP server in a background goroutine.
 // Returns an error if the server cannot start.
 func (s *Server) Start() error {
@@ -68,6 +75,7 @@ func (s *Server) Start() error {
 
 	// Register health check endpoint
 	mux.HandleFunc("/health", s.handleHealth)
+	mux.HandleFunc("/ready", s.handleReady)
 
 	s.server = &http.Server{
 		Addr:         s.listenAddr,
@@ -127,6 +135,20 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	response := fmt.Sprintf(`{"status":"healthy","backends":%s}`, formatHealthJSON(backendHealth))
 	w.Write([]byte(response))
+}
+
+func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if s.readyCheckFunc == nil || !s.readyCheckFunc() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"status":"not_ready"}`))
+		return
+	}
+	_, _ = w.Write([]byte(`{"status":"ready"}`))
 }
 
 // formatHealthJSON converts health map to JSON string.

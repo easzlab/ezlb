@@ -1,4 +1,4 @@
-//go:build !integration
+//go:build !linux || fake
 
 package server
 
@@ -6,10 +6,56 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/easzlab/ezlb/pkg/config"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
 )
+
+func TestFullNATKernelPrerequisiteControlsReadiness(t *testing.T) {
+	oldEnabled := kernelParamCheckEnabled
+	oldReader := readKernelParamFile
+	kernelParamCheckEnabled = true
+	readKernelParamFile = func(path string) ([]byte, error) {
+		if path == "/proc/sys/net/ipv4/vs/conntrack" {
+			return []byte("0\n"), nil
+		}
+		return []byte("1\n"), nil
+	}
+	t.Cleanup(func() {
+		kernelParamCheckEnabled = oldEnabled
+		readKernelParamFile = oldReader
+	})
+	if err := checkFullNATKernelParams([]config.ServiceConfig{{FullNAT: true}}); err == nil {
+		t.Fatal("expected disabled conntrack to block FullNAT")
+	}
+	if err := checkFullNATKernelParams([]config.ServiceConfig{{FullNAT: false}}); err != nil {
+		t.Fatalf("non-FullNAT should not require IPVS conntrack: %v", err)
+	}
+	configYAML := `
+services:
+  - name: web
+    listen: 10.0.0.1:80
+    protocol: tcp
+    scheduler: rr
+    full_nat: true
+    health_check:
+      enabled: false
+    backends:
+      - address: 192.168.1.10:8080
+        weight: 1
+`
+	configPath := writeYAMLFile(t, t.TempDir(), configYAML)
+	srv := newTestServer(t, configPath)
+	t.Cleanup(srv.shutdown)
+	if err := srv.reconcileServices(srv.configMgr.GetConfig().Services); err == nil || srv.ready.Load() {
+		t.Fatal("FullNAT with disabled conntrack must be unready")
+	}
+	readKernelParamFile = func(string) ([]byte, error) { return []byte("1\n"), nil }
+	if err := srv.reconcileServices(srv.configMgr.GetConfig().Services); err != nil || !srv.ready.Load() {
+		t.Fatalf("FullNAT should become ready after prerequisite recovery: %v", err)
+	}
+}
 
 func TestServerSyncTrafficCollectorStartsWhenMetricsEnabled(t *testing.T) {
 	configYAML := `

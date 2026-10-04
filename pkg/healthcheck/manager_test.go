@@ -20,7 +20,7 @@ func boolPtr(b bool) *bool {
 
 func TestIsHealthy_UnknownAddress(t *testing.T) {
 	mgr := NewManager(nil, zap.NewNop())
-	if !mgr.IsHealthy("192.168.1.1:8080") {
+	if !mgr.IsHealthy("svc1", "192.168.1.1:8080") {
 		t.Error("expected unknown address to be considered healthy")
 	}
 }
@@ -28,13 +28,13 @@ func TestIsHealthy_UnknownAddress(t *testing.T) {
 func TestIsHealthy_HealthyBackend(t *testing.T) {
 	mgr := NewManager(nil, zap.NewNop())
 	mgr.mu.Lock()
-	mgr.statuses["192.168.1.1:8080"] = &backendStatus{
+	mgr.statuses[Target{Service: "svc1", Address: "192.168.1.1:8080"}] = &backendStatus{
 		address: "192.168.1.1:8080",
 		healthy: true,
 	}
 	mgr.mu.Unlock()
 
-	if !mgr.IsHealthy("192.168.1.1:8080") {
+	if !mgr.IsHealthy("svc1", "192.168.1.1:8080") {
 		t.Error("expected healthy backend to return true")
 	}
 }
@@ -42,14 +42,61 @@ func TestIsHealthy_HealthyBackend(t *testing.T) {
 func TestIsHealthy_UnhealthyBackend(t *testing.T) {
 	mgr := NewManager(nil, zap.NewNop())
 	mgr.mu.Lock()
-	mgr.statuses["192.168.1.1:8080"] = &backendStatus{
+	mgr.statuses[Target{Service: "svc1", Address: "192.168.1.1:8080"}] = &backendStatus{
 		address: "192.168.1.1:8080",
 		healthy: false,
 	}
 	mgr.mu.Unlock()
 
-	if mgr.IsHealthy("192.168.1.1:8080") {
+	if mgr.IsHealthy("svc1", "192.168.1.1:8080") {
 		t.Error("expected unhealthy backend to return false")
+	}
+}
+
+func TestSharedBackendHasIndependentServiceHealth(t *testing.T) {
+	mgr := NewManager(nil, zap.NewNop())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	address := "192.168.1.1:8080"
+	services := []config.ServiceConfig{
+		{Name: "a", HealthCheck: config.HealthCheckConfig{Interval: "1h", FailCount: 1}, Backends: []config.BackendConfig{{Address: address}}},
+		{Name: "b", HealthCheck: config.HealthCheckConfig{Interval: "1h", FailCount: 1}, Backends: []config.BackendConfig{{Address: address}}},
+	}
+	mgr.UpdateTargets(ctx, services)
+	keyA := Target{Service: "a", Address: address}
+	mgr.mu.RLock()
+	checkA := mgr.statuses[keyA].check
+	mgr.mu.RUnlock()
+	mgr.handleCheckResult(keyA, fmt.Errorf("probe failed"), checkA)
+	if mgr.IsHealthy("a", address) || !mgr.IsHealthy("b", address) {
+		t.Fatal("one service's failed probe must not affect the other service")
+	}
+}
+
+func TestUpdateTargetsRebuildsChangedProbeAndIgnoresStaleResult(t *testing.T) {
+	mgr := NewManager(nil, zap.NewNop())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	services := []config.ServiceConfig{{
+		Name: "a", HealthCheck: config.HealthCheckConfig{Interval: "1h", FailCount: 1},
+		Backends: []config.BackendConfig{{Address: "192.168.1.1:8080"}},
+	}}
+	key := Target{Service: "a", Address: "192.168.1.1:8080"}
+	mgr.UpdateTargets(ctx, services)
+	mgr.mu.RLock()
+	oldCheck := mgr.statuses[key].check
+	mgr.mu.RUnlock()
+	services[0].HealthCheck.Timeout = "1s"
+	mgr.UpdateTargets(ctx, services)
+	mgr.mu.RLock()
+	newCheck := mgr.statuses[key].check
+	mgr.mu.RUnlock()
+	if oldCheck == newCheck {
+		t.Fatal("changed probe settings must create a new check")
+	}
+	mgr.handleCheckResult(key, fmt.Errorf("stale failure"), oldCheck)
+	if !mgr.IsHealthy("a", key.Address) {
+		t.Fatal("stale check result changed replacement health status")
 	}
 }
 
@@ -81,10 +128,10 @@ func TestUpdateTargets_RegisterBackend(t *testing.T) {
 	mgr.mu.RLock()
 	defer mgr.mu.RUnlock()
 
-	if _, exists := mgr.statuses["192.168.1.1:8080"]; !exists {
+	if _, exists := mgr.statuses[Target{Service: "svc1", Address: "192.168.1.1:8080"}]; !exists {
 		t.Fatal("expected backend to be registered in statuses")
 	}
-	if !mgr.statuses["192.168.1.1:8080"].healthy {
+	if !mgr.statuses[Target{Service: "svc1", Address: "192.168.1.1:8080"}].healthy {
 		t.Error("expected initial status to be healthy")
 	}
 }
@@ -134,10 +181,10 @@ func TestUpdateTargets_RemoveBackend(t *testing.T) {
 	mgr.mu.RLock()
 	defer mgr.mu.RUnlock()
 
-	if _, exists := mgr.statuses["192.168.1.2:8080"]; exists {
+	if _, exists := mgr.statuses[Target{Service: "svc1", Address: "192.168.1.2:8080"}]; exists {
 		t.Error("expected removed backend to be cleaned up from statuses")
 	}
-	if _, exists := mgr.statuses["192.168.1.1:8080"]; !exists {
+	if _, exists := mgr.statuses[Target{Service: "svc1", Address: "192.168.1.1:8080"}]; !exists {
 		t.Error("expected remaining backend to still be in statuses")
 	}
 }
@@ -165,7 +212,7 @@ func TestUpdateTargets_DisabledHealthCheck(t *testing.T) {
 
 	// Backend should not be tracked when health check is disabled
 	mgr.mu.RLock()
-	_, exists := mgr.statuses["192.168.1.1:8080"]
+	_, exists := mgr.statuses[Target{Service: "svc1", Address: "192.168.1.1:8080"}]
 	mgr.mu.RUnlock()
 
 	if exists {
@@ -173,7 +220,7 @@ func TestUpdateTargets_DisabledHealthCheck(t *testing.T) {
 	}
 
 	// But IsHealthy should return true for untracked backends
-	if !mgr.IsHealthy("192.168.1.1:8080") {
+	if !mgr.IsHealthy("svc1", "192.168.1.1:8080") {
 		t.Error("expected untracked backend to be considered healthy")
 	}
 }
@@ -202,7 +249,7 @@ func TestUpdateTargets_EnabledToDisabledTransition(t *testing.T) {
 	mgr.UpdateTargets(ctx, services1)
 
 	mgr.mu.RLock()
-	_, tracked := mgr.statuses["192.168.1.1:8080"]
+	_, tracked := mgr.statuses[Target{Service: "svc1", Address: "192.168.1.1:8080"}]
 	mgr.mu.RUnlock()
 	if !tracked {
 		t.Fatal("expected backend to be tracked when health check is enabled")
@@ -225,7 +272,7 @@ func TestUpdateTargets_EnabledToDisabledTransition(t *testing.T) {
 	mgr.UpdateTargets(ctx, services2)
 
 	mgr.mu.RLock()
-	_, stillTracked := mgr.statuses["192.168.1.1:8080"]
+	_, stillTracked := mgr.statuses[Target{Service: "svc1", Address: "192.168.1.1:8080"}]
 	mgr.mu.RUnlock()
 	if stillTracked {
 		t.Error("expected backend to be untracked after disabling health check")
@@ -248,7 +295,7 @@ func TestHandleCheckResult_ConsecutiveFailsMarkUnhealthy(t *testing.T) {
 
 	// Manually inject a backend status
 	mgr.mu.Lock()
-	mgr.statuses["192.168.1.1:8080"] = &backendStatus{
+	mgr.statuses[Target{Service: "svc1", Address: "192.168.1.1:8080"}] = &backendStatus{
 		address: "192.168.1.1:8080",
 		healthy: true,
 	}
@@ -257,21 +304,21 @@ func TestHandleCheckResult_ConsecutiveFailsMarkUnhealthy(t *testing.T) {
 	checkErr := fmt.Errorf("connection refused")
 
 	// Fail 1 and 2: should still be healthy
-	mgr.handleCheckResult("192.168.1.1:8080", checkErr, svcCheck)
-	mgr.handleCheckResult("192.168.1.1:8080", checkErr, svcCheck)
+	mgr.handleCheckResult(Target{Service: "svc1", Address: "192.168.1.1:8080"}, checkErr, svcCheck)
+	mgr.handleCheckResult(Target{Service: "svc1", Address: "192.168.1.1:8080"}, checkErr, svcCheck)
 
 	mgr.mu.RLock()
-	stillHealthy := mgr.statuses["192.168.1.1:8080"].healthy
+	stillHealthy := mgr.statuses[Target{Service: "svc1", Address: "192.168.1.1:8080"}].healthy
 	mgr.mu.RUnlock()
 	if !stillHealthy {
 		t.Error("expected backend to still be healthy after 2 failures (threshold is 3)")
 	}
 
 	// Fail 3: should become unhealthy
-	mgr.handleCheckResult("192.168.1.1:8080", checkErr, svcCheck)
+	mgr.handleCheckResult(Target{Service: "svc1", Address: "192.168.1.1:8080"}, checkErr, svcCheck)
 
 	mgr.mu.RLock()
-	nowUnhealthy := !mgr.statuses["192.168.1.1:8080"].healthy
+	nowUnhealthy := !mgr.statuses[Target{Service: "svc1", Address: "192.168.1.1:8080"}].healthy
 	mgr.mu.RUnlock()
 	if !nowUnhealthy {
 		t.Error("expected backend to be unhealthy after 3 consecutive failures")
@@ -296,27 +343,27 @@ func TestHandleCheckResult_ConsecutiveSuccessMarkHealthy(t *testing.T) {
 
 	// Start with unhealthy backend
 	mgr.mu.Lock()
-	mgr.statuses["192.168.1.1:8080"] = &backendStatus{
+	mgr.statuses[Target{Service: "svc1", Address: "192.168.1.1:8080"}] = &backendStatus{
 		address: "192.168.1.1:8080",
 		healthy: false,
 	}
 	mgr.mu.Unlock()
 
 	// Success 1: should still be unhealthy
-	mgr.handleCheckResult("192.168.1.1:8080", nil, svcCheck)
+	mgr.handleCheckResult(Target{Service: "svc1", Address: "192.168.1.1:8080"}, nil, svcCheck)
 
 	mgr.mu.RLock()
-	stillUnhealthy := !mgr.statuses["192.168.1.1:8080"].healthy
+	stillUnhealthy := !mgr.statuses[Target{Service: "svc1", Address: "192.168.1.1:8080"}].healthy
 	mgr.mu.RUnlock()
 	if !stillUnhealthy {
 		t.Error("expected backend to still be unhealthy after 1 success (threshold is 2)")
 	}
 
 	// Success 2: should become healthy
-	mgr.handleCheckResult("192.168.1.1:8080", nil, svcCheck)
+	mgr.handleCheckResult(Target{Service: "svc1", Address: "192.168.1.1:8080"}, nil, svcCheck)
 
 	mgr.mu.RLock()
-	nowHealthy := mgr.statuses["192.168.1.1:8080"].healthy
+	nowHealthy := mgr.statuses[Target{Service: "svc1", Address: "192.168.1.1:8080"}].healthy
 	mgr.mu.RUnlock()
 	if !nowHealthy {
 		t.Error("expected backend to be healthy after 2 consecutive successes")
@@ -341,13 +388,13 @@ func TestHandleCheckResult_NoChangeNoCallback(t *testing.T) {
 
 	// Healthy backend, successful check -> no state change
 	mgr.mu.Lock()
-	mgr.statuses["192.168.1.1:8080"] = &backendStatus{
+	mgr.statuses[Target{Service: "svc1", Address: "192.168.1.1:8080"}] = &backendStatus{
 		address: "192.168.1.1:8080",
 		healthy: true,
 	}
 	mgr.mu.Unlock()
 
-	mgr.handleCheckResult("192.168.1.1:8080", nil, svcCheck)
+	mgr.handleCheckResult(Target{Service: "svc1", Address: "192.168.1.1:8080"}, nil, svcCheck)
 
 	if onChangeCalled.Load() != 0 {
 		t.Errorf("expected onChange not to be called when status doesn't change, got %d", onChangeCalled.Load())
@@ -364,19 +411,19 @@ func TestHandleCheckResult_FailResetsConsecutiveOK(t *testing.T) {
 	}
 
 	mgr.mu.Lock()
-	mgr.statuses["192.168.1.1:8080"] = &backendStatus{
+	mgr.statuses[Target{Service: "svc1", Address: "192.168.1.1:8080"}] = &backendStatus{
 		address: "192.168.1.1:8080",
 		healthy: false,
 	}
 	mgr.mu.Unlock()
 
 	// 2 successes, then 1 failure should reset the counter
-	mgr.handleCheckResult("192.168.1.1:8080", nil, svcCheck)
-	mgr.handleCheckResult("192.168.1.1:8080", nil, svcCheck)
-	mgr.handleCheckResult("192.168.1.1:8080", fmt.Errorf("fail"), svcCheck)
+	mgr.handleCheckResult(Target{Service: "svc1", Address: "192.168.1.1:8080"}, nil, svcCheck)
+	mgr.handleCheckResult(Target{Service: "svc1", Address: "192.168.1.1:8080"}, nil, svcCheck)
+	mgr.handleCheckResult(Target{Service: "svc1", Address: "192.168.1.1:8080"}, fmt.Errorf("fail"), svcCheck)
 
 	mgr.mu.RLock()
-	status := mgr.statuses["192.168.1.1:8080"]
+	status := mgr.statuses[Target{Service: "svc1", Address: "192.168.1.1:8080"}]
 	consecutiveOK := status.consecutiveOK
 	consecutiveFails := status.consecutiveFails
 	mgr.mu.RUnlock()
@@ -399,7 +446,7 @@ func TestHandleCheckResult_UnknownAddressIgnored(t *testing.T) {
 	}
 
 	// Should not panic or error for unknown address
-	mgr.handleCheckResult("unknown:1234", nil, svcCheck)
+	mgr.handleCheckResult(Target{Service: "svc1", Address: "unknown:1234"}, nil, svcCheck)
 }
 
 // --- Stop tests ---
@@ -465,31 +512,31 @@ func TestManager_FullLifecycle(t *testing.T) {
 
 	// Register backend manually
 	mgr.mu.Lock()
-	mgr.statuses["192.168.1.1:8080"] = &backendStatus{
+	mgr.statuses[Target{Service: "svc1", Address: "192.168.1.1:8080"}] = &backendStatus{
 		address: "192.168.1.1:8080",
 		healthy: true,
 	}
 	mgr.mu.Unlock()
 
 	// Verify initially healthy
-	if !mgr.IsHealthy("192.168.1.1:8080") {
+	if !mgr.IsHealthy("svc1", "192.168.1.1:8080") {
 		t.Fatal("expected initially healthy")
 	}
 
 	// Fail twice -> unhealthy
 	checkErr := fmt.Errorf("connection refused")
-	mgr.handleCheckResult("192.168.1.1:8080", checkErr, svcCheck)
-	mgr.handleCheckResult("192.168.1.1:8080", checkErr, svcCheck)
+	mgr.handleCheckResult(Target{Service: "svc1", Address: "192.168.1.1:8080"}, checkErr, svcCheck)
+	mgr.handleCheckResult(Target{Service: "svc1", Address: "192.168.1.1:8080"}, checkErr, svcCheck)
 
-	if mgr.IsHealthy("192.168.1.1:8080") {
+	if mgr.IsHealthy("svc1", "192.168.1.1:8080") {
 		t.Fatal("expected unhealthy after 2 failures")
 	}
 
 	// Succeed twice -> healthy again
-	mgr.handleCheckResult("192.168.1.1:8080", nil, svcCheck)
-	mgr.handleCheckResult("192.168.1.1:8080", nil, svcCheck)
+	mgr.handleCheckResult(Target{Service: "svc1", Address: "192.168.1.1:8080"}, nil, svcCheck)
+	mgr.handleCheckResult(Target{Service: "svc1", Address: "192.168.1.1:8080"}, nil, svcCheck)
 
-	if !mgr.IsHealthy("192.168.1.1:8080") {
+	if !mgr.IsHealthy("svc1", "192.168.1.1:8080") {
 		t.Fatal("expected healthy after 2 successes")
 	}
 

@@ -18,7 +18,7 @@ import (
 func runEzlbOnce(t *testing.T, configPath string) string {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	cmd := exec.Command(ezlbBinary, "once", "-c", configPath)
+	cmd := exec.Command(ezlbBinary, "once", "--exclusive-netns", "-c", configPath)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -32,7 +32,7 @@ func runEzlbOnce(t *testing.T, configPath string) string {
 func runEzlbOnceExpectFailure(t *testing.T, configPath string) (string, string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	cmd := exec.Command(ezlbBinary, "once", "-c", configPath)
+	cmd := exec.Command(ezlbBinary, "once", "--exclusive-netns", "-c", configPath)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
@@ -58,7 +58,7 @@ func runEzlbVersion(t *testing.T) string {
 // The caller is responsible for stopping the process.
 func runEzlbDaemon(t *testing.T, configPath string) *exec.Cmd {
 	t.Helper()
-	cmd := exec.Command(ezlbBinary, "start", "-c", configPath)
+	cmd := exec.Command(ezlbBinary, "start", "--exclusive-netns", "-c", configPath)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {

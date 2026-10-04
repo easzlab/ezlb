@@ -1,3 +1,5 @@
+//go:build !linux || fake || integration
+
 package lvs
 
 import (
@@ -20,7 +22,7 @@ func newMockHealthChecker() *mockHealthChecker {
 	}
 }
 
-func (m *mockHealthChecker) IsHealthy(address string) bool {
+func (m *mockHealthChecker) IsHealthy(_ string, address string) bool {
 	healthy, ok := m.status[address]
 	if !ok {
 		return true
@@ -644,17 +646,17 @@ func TestReconciler_Cleanup_RemovesManagedServices(t *testing.T) {
 	}
 }
 
-func TestReconciler_Cleanup_PreservesUnmanagedServices(t *testing.T) {
+func TestReconciler_ExclusiveNamespace_RemovesUnconfiguredService(t *testing.T) {
 	mgr, healthMgr, reconciler := newReconcilerTestEnv(t)
 	defer mgr.Close()
 
-	// Manually create a service that ezlb does NOT manage
+	// A service left in the namespace by a previous ezlb process.
 	unmanaged := newTestService("10.99.0.1", 9999, 6, "rr")
 	if err := mgr.CreateService(unmanaged); err != nil {
 		t.Fatalf("failed to create unmanaged service: %v", err)
 	}
 
-	// Reconcile one managed service
+	// Reconcile the current configuration, pruning the old service.
 	healthMgr.status["192.168.1.1:8080"] = true
 	configs := []config.ServiceConfig{
 		makeServiceConfig("svc1", "10.0.0.1:80", "rr", false,
@@ -665,22 +667,21 @@ func TestReconciler_Cleanup_PreservesUnmanagedServices(t *testing.T) {
 	}
 
 	services, _ := mgr.GetServices()
-	if len(services) != 2 {
-		t.Fatalf("expected 2 services before cleanup, got %d", len(services))
+	if len(services) != 1 {
+		t.Fatalf("expected 1 service after reconcile, got %d", len(services))
+	}
+	if services[0].Address.Equal(unmanaged.Address) {
+		t.Fatal("old unconfigured service was not removed")
 	}
 
-	// Cleanup should only remove the managed service
+	// Cleanup owns all remaining services in the namespace.
 	if err := reconciler.Cleanup(); err != nil {
 		t.Fatalf("Cleanup failed: %v", err)
 	}
 
 	services, _ = mgr.GetServices()
-	if len(services) != 1 {
-		t.Fatalf("expected 1 service (unmanaged) after cleanup, got %d", len(services))
-	}
-	if !services[0].Address.Equal(unmanaged.Address) || services[0].Port != unmanaged.Port {
-		t.Errorf("expected unmanaged service 10.99.0.1:9999 to remain, got %s:%d",
-			services[0].Address, services[0].Port)
+	if len(services) != 0 {
+		t.Fatalf("expected empty namespace after cleanup, got %d services", len(services))
 	}
 }
 

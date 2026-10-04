@@ -1,0 +1,31 @@
+global:
+  admin_address: "0.0.0.0:9095"
+  cleanup_on_exit: true
+  metrics_enabled: true
+  metrics_interval: 5s
+  log:
+    level: info
+    home: /tmp/ezlb-logs
+
+services:
+  - name: web
+    listen: 172.30.0.10:8080
+    protocol: tcp
+    scheduler: rr
+    forward_mode: nat
+    full_nat: true
+    snat_ip: 172.30.0.10
+    health_check:
+      enabled: true
+      type: http
+      http_path: /healthz
+      http_expected_status: 200
+      interval: 1s
+      timeout: 1s
+      fail_count: 1
+      rise_count: 1
+    backends:
+      - address: 172.30.0.11:8080
+        weight: 1
+      - address: 172.30.0.12:8080
+        weight: 1

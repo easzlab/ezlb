@@ -3,6 +3,9 @@ package config
 import (
 	"fmt"
 	"net"
+	"reflect"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,15 +22,15 @@ type Config struct {
 
 // GlobalConfig holds global settings.
 type GlobalConfig struct {
-	CleanupOnExit  *bool     `yaml:"cleanup_on_exit"  mapstructure:"cleanup_on_exit"`
-	MetricsEnabled *bool     `yaml:"metrics_enabled"  mapstructure:"metrics_enabled"`
-	AdminAddress   string    `yaml:"admin_address"    mapstructure:"admin_address"`
-	MetricsPath    string    `yaml:"metrics_path"     mapstructure:"metrics_path"`
+	CleanupOnExit  *bool  `yaml:"cleanup_on_exit"  mapstructure:"cleanup_on_exit"`
+	MetricsEnabled *bool  `yaml:"metrics_enabled"  mapstructure:"metrics_enabled"`
+	AdminAddress   string `yaml:"admin_address"    mapstructure:"admin_address"`
+	MetricsPath    string `yaml:"metrics_path"     mapstructure:"metrics_path"`
 	// MetricsInterval controls how often the traffic stats collector polls
 	// IPVS for Prometheus metrics. The collector runs whenever metrics are
 	// enabled (global.metrics_enabled). Minimum 5s, defaults to 15s.
 	MetricsInterval string    `yaml:"metrics_interval" mapstructure:"metrics_interval"`
-	Log            LogConfig `yaml:"log"              mapstructure:"log"`
+	Log             LogConfig `yaml:"log"              mapstructure:"log"`
 }
 
 // LogConfig holds unified logging configuration.
@@ -383,6 +386,15 @@ func Validate(cfg *Config) error {
 	if len(cfg.Services) == 0 {
 		return fmt.Errorf("at least one service must be defined")
 	}
+	if cfg.Global.AdminAddress != "" {
+		if _, _, err := net.SplitHostPort(cfg.Global.AdminAddress); err != nil {
+			return fmt.Errorf("global.admin_address: %w", err)
+		}
+	}
+	metricsPath := cfg.Global.GetMetricsPath()
+	if !strings.HasPrefix(metricsPath, "/") || metricsPath == "/health" || metricsPath == "/ready" {
+		return fmt.Errorf("global.metrics_path: invalid or reserved path %q", metricsPath)
+	}
 
 	nameSet := make(map[string]bool)
 	listenSet := make(map[string]bool)
@@ -401,11 +413,13 @@ func Validate(cfg *Config) error {
 		if err != nil {
 			return fmt.Errorf("service %q: invalid listen address %q: %w", svc.Name, svc.Listen, err)
 		}
-		if net.ParseIP(host) == nil {
+		listenIP := net.ParseIP(host)
+		if listenIP == nil {
 			return fmt.Errorf("service %q: invalid listen IP %q", svc.Name, host)
 		}
-		if port == "" || port == "0" {
-			return fmt.Errorf("service %q: listen port must be a positive number", svc.Name)
+		listenPort, err := parsePort(port)
+		if err != nil {
+			return fmt.Errorf("service %q: invalid listen port %q: %w", svc.Name, port, err)
 		}
 
 		// Validate protocol (default to tcp)
@@ -419,7 +433,7 @@ func Validate(cfg *Config) error {
 		}
 
 		// Deduplicate by listen address + protocol (IPVS allows same IP:Port for different protocols)
-		listenKey := svc.Listen + "/" + protocol
+		listenKey := net.JoinHostPort(listenIP.String(), strconv.Itoa(int(listenPort))) + "/" + protocol
 		if listenSet[listenKey] {
 			return fmt.Errorf("service %q: duplicate listen address %q for protocol %q", svc.Name, svc.Listen, protocol)
 		}
@@ -443,17 +457,28 @@ func Validate(cfg *Config) error {
 		if svc.FullNAT && forwardMode != "nat" {
 			return fmt.Errorf("service %q: full_nat requires forward_mode=nat, got %q", svc.Name, forwardMode)
 		}
+		if svc.FullNAT && listenIP.To4() == nil {
+			return fmt.Errorf("service %q: full_nat currently supports IPv4 only", svc.Name)
+		}
 
 		// Validate health check parameters
 		if svc.HealthCheck.IsEnabled() {
 			if svc.HealthCheck.Interval != "" {
-				if _, err := time.ParseDuration(svc.HealthCheck.Interval); err != nil {
+				interval, err := time.ParseDuration(svc.HealthCheck.Interval)
+				if err != nil {
 					return fmt.Errorf("service %q: invalid health_check.interval %q: %w", svc.Name, svc.HealthCheck.Interval, err)
+				}
+				if interval <= 0 {
+					return fmt.Errorf("service %q: health_check.interval must be positive", svc.Name)
 				}
 			}
 			if svc.HealthCheck.Timeout != "" {
-				if _, err := time.ParseDuration(svc.HealthCheck.Timeout); err != nil {
+				timeout, err := time.ParseDuration(svc.HealthCheck.Timeout)
+				if err != nil {
 					return fmt.Errorf("service %q: invalid health_check.timeout %q: %w", svc.Name, svc.HealthCheck.Timeout, err)
+				}
+				if timeout <= 0 {
+					return fmt.Errorf("service %q: health_check.timeout must be positive", svc.Name)
 				}
 			}
 
@@ -480,7 +505,7 @@ func Validate(cfg *Config) error {
 			if !svc.FullNAT {
 				return fmt.Errorf("service %q: snat_ip requires full_nat to be enabled", svc.Name)
 			}
-			if net.ParseIP(svc.SnatIP) == nil {
+			if ip := net.ParseIP(svc.SnatIP); ip == nil || ip.To4() == nil {
 				return fmt.Errorf("service %q: invalid snat_ip %q", svc.Name, svc.SnatIP)
 			}
 		}
@@ -499,16 +524,22 @@ func Validate(cfg *Config) error {
 			if err != nil {
 				return fmt.Errorf("service %q: backend[%d]: invalid address %q: %w", svc.Name, j, backend.Address, err)
 			}
-			if net.ParseIP(backendHost) == nil {
+			backendIP := net.ParseIP(backendHost)
+			if backendIP == nil {
 				return fmt.Errorf("service %q: backend[%d]: invalid IP %q", svc.Name, j, backendHost)
 			}
-			if backendPort == "" || backendPort == "0" {
-				return fmt.Errorf("service %q: backend[%d]: port must be a positive number", svc.Name, j)
+			parsedBackendPort, err := parsePort(backendPort)
+			if err != nil {
+				return fmt.Errorf("service %q: backend[%d]: invalid port %q: %w", svc.Name, j, backendPort, err)
 			}
-			if backendSet[backend.Address] {
+			if (listenIP.To4() == nil) != (backendIP.To4() == nil) {
+				return fmt.Errorf("service %q: backend[%d]: IP family must match listen address", svc.Name, j)
+			}
+			backendKey := net.JoinHostPort(backendIP.String(), strconv.Itoa(int(parsedBackendPort)))
+			if backendSet[backendKey] {
 				return fmt.Errorf("service %q: backend[%d]: duplicate address %q", svc.Name, j, backend.Address)
 			}
-			backendSet[backend.Address] = true
+			backendSet[backendKey] = true
 
 			if backend.Weight <= 0 {
 				return fmt.Errorf("service %q: backend[%d]: weight must be a positive integer", svc.Name, j)
@@ -516,6 +547,29 @@ func Validate(cfg *Config) error {
 		}
 	}
 
+	return nil
+}
+
+func parsePort(value string) (uint16, error) {
+	port, err := strconv.ParseUint(value, 10, 16)
+	if err != nil {
+		return 0, err
+	}
+	if port == 0 {
+		return 0, fmt.Errorf("must be between 1 and 65535")
+	}
+	return uint16(port), nil
+}
+
+// Restart-only settings are rejected during hot reload so the active config
+// never claims an admin endpoint or logger state that was not actually applied.
+func validateReload(current, next *Config) error {
+	if current.Global.AdminAddress != next.Global.AdminAddress ||
+		current.Global.GetMetricsPath() != next.Global.GetMetricsPath() ||
+		current.Global.IsMetricsEnabled() != next.Global.IsMetricsEnabled() ||
+		!reflect.DeepEqual(current.Global.Log, next.Global.Log) {
+		return fmt.Errorf("global.admin_address, metrics_path, metrics_enabled, and log settings require a restart")
+	}
 	return nil
 }
 
@@ -532,6 +586,11 @@ func (m *Manager) WatchConfig() {
 		}
 
 		m.mu.Lock()
+		if err := validateReload(m.current, cfg); err != nil {
+			m.mu.Unlock()
+			m.logger.Error("rejected restart-only config change, keeping previous config", zap.Error(err))
+			return
+		}
 		m.current = cfg
 		m.mu.Unlock()
 

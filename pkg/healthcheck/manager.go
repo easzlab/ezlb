@@ -9,263 +9,207 @@ import (
 	"go.uber.org/zap"
 )
 
-// backendStatus tracks the health state and consecutive check results for a single backend.
+// Target identifies a check by both service and backend. The same backend can
+// have different probe settings and health states in different services.
+type Target struct {
+	Service string
+	Address string
+}
+
+type checkSpec struct {
+	checkType      string
+	httpPath       string
+	interval       time.Duration
+	timeout        time.Duration
+	failCount      int
+	riseCount      int
+	expectedStatus int
+}
+
 type backendStatus struct {
 	cancel           context.CancelFunc
+	check            *serviceCheckConfig
 	address          string
 	consecutiveFails int
 	consecutiveOK    int
 	healthy          bool
 }
 
-// serviceCheckConfig holds the health check parameters for a specific service's backends.
 type serviceCheckConfig struct {
 	checker   Checker
+	spec      checkSpec
 	interval  time.Duration
 	failCount int
 	riseCount int
 	enabled   bool
 }
 
-// Manager orchestrates health checks for all backends across all services.
+// Manager orchestrates checks for all service/backend pairs.
 type Manager struct {
 	services map[string]*serviceCheckConfig
-	statuses map[string]*backendStatus
+	statuses map[Target]*backendStatus
 	onChange func()
 	logger   *zap.Logger
 	mu       sync.RWMutex
 }
 
-// NewManager creates a new health check Manager.
-// The onChange callback is invoked whenever a backend's health status changes.
 func NewManager(onChange func(), logger *zap.Logger) *Manager {
 	return &Manager{
 		services: make(map[string]*serviceCheckConfig),
-		statuses: make(map[string]*backendStatus),
+		statuses: make(map[Target]*backendStatus),
 		onChange: onChange,
 		logger:   logger,
 	}
 }
 
-// IsHealthy returns whether the given backend address is considered healthy.
-// Backends belonging to services with health check disabled always return true.
-// Backends not tracked (unknown) are considered healthy by default.
-func (m *Manager) IsHealthy(address string) bool {
+// IsHealthy returns true for untracked targets, including disabled checks.
+func (m *Manager) IsHealthy(service, address string) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-
-	status, exists := m.statuses[address]
-	if !exists {
-		return true
-	}
-	return status.healthy
+	status, exists := m.statuses[Target{Service: service, Address: address}]
+	return !exists || status.healthy
 }
 
-// UpdateTargets synchronizes the health check targets with the current configuration.
-// It starts checks for new backends, stops checks for removed backends,
-// and handles enable/disable transitions for each service.
+func newServiceCheckConfig(cfg config.HealthCheckConfig) *serviceCheckConfig {
+	spec := checkSpec{
+		checkType:      cfg.GetType(),
+		httpPath:       cfg.GetHTTPPath(),
+		interval:       cfg.GetInterval(),
+		timeout:        cfg.GetTimeout(),
+		failCount:      cfg.GetFailCount(),
+		riseCount:      cfg.GetRiseCount(),
+		expectedStatus: cfg.GetHTTPExpectedStatus(),
+	}
+	var checker Checker
+	if spec.checkType == "http" {
+		checker = NewHTTPChecker(spec.timeout, spec.httpPath, spec.expectedStatus)
+	} else {
+		checker = NewTCPChecker(spec.timeout)
+	}
+	return &serviceCheckConfig{
+		checker:   checker,
+		spec:      spec,
+		interval:  spec.interval,
+		failCount: spec.failCount,
+		riseCount: spec.riseCount,
+		enabled:   true,
+	}
+}
+
+// UpdateTargets replaces removed or reconfigured checks and starts new ones.
 func (m *Manager) UpdateTargets(ctx context.Context, services []config.ServiceConfig) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Build the new desired state
-	newServiceNames := make(map[string]bool)
-	newBackendAddresses := make(map[string]bool)
-
-	for _, svcCfg := range services {
-		newServiceNames[svcCfg.Name] = true
-
-		if !svcCfg.HealthCheck.IsEnabled() {
-			// Service has health check disabled
-			oldSvcCheck, existed := m.services[svcCfg.Name]
-			if existed && oldSvcCheck.enabled {
-				// Transition: enabled -> disabled, stop all checks for this service's backends
-				m.stopServiceBackendsLocked(svcCfg)
-			}
-			m.services[svcCfg.Name] = &serviceCheckConfig{
-				enabled: false,
-			}
-			// Mark backends as not tracked (will return healthy by default)
-			for _, backend := range svcCfg.Backends {
-				newBackendAddresses[backend.Address] = true
-			}
+	desired := make(map[Target]*serviceCheckConfig)
+	newServices := make(map[string]*serviceCheckConfig, len(services))
+	for _, svc := range services {
+		if !svc.HealthCheck.IsEnabled() {
+			newServices[svc.Name] = &serviceCheckConfig{enabled: false}
 			continue
 		}
-
-		// Service has health check enabled — select checker by type
-		var checker Checker
-		switch svcCfg.HealthCheck.GetType() {
-		case "http":
-			checker = NewHTTPChecker(
-				svcCfg.HealthCheck.GetTimeout(),
-				svcCfg.HealthCheck.GetHTTPPath(),
-				svcCfg.HealthCheck.GetHTTPExpectedStatus(),
-			)
-		default:
-			checker = NewTCPChecker(svcCfg.HealthCheck.GetTimeout())
-		}
-		svcCheck := &serviceCheckConfig{
-			checker:   checker,
-			interval:  svcCfg.HealthCheck.GetInterval(),
-			failCount: svcCfg.HealthCheck.GetFailCount(),
-			riseCount: svcCfg.HealthCheck.GetRiseCount(),
-			enabled:   true,
-		}
-		m.services[svcCfg.Name] = svcCheck
-
-		for _, backend := range svcCfg.Backends {
-			newBackendAddresses[backend.Address] = true
-
-			if _, exists := m.statuses[backend.Address]; !exists {
-				// New backend: start health check, initial state is healthy
-				m.startBackendCheckLocked(ctx, backend.Address, svcCheck)
-			}
+		check := newServiceCheckConfig(svc.HealthCheck)
+		newServices[svc.Name] = check
+		for _, backend := range svc.Backends {
+			desired[Target{Service: svc.Name, Address: backend.Address}] = check
 		}
 	}
 
-	// Stop checks for removed services
-	for svcName := range m.services {
-		if !newServiceNames[svcName] {
-			delete(m.services, svcName)
+	for target, status := range m.statuses {
+		check, exists := desired[target]
+		if exists && status.check != nil && status.check.spec == check.spec {
+			continue
+		}
+		if status.cancel != nil {
+			status.cancel()
+		}
+		delete(m.statuses, target)
+		m.logger.Info("stopped health check", zap.String("service", target.Service), zap.String("address", target.Address))
+	}
+	for target, check := range desired {
+		if _, exists := m.statuses[target]; !exists {
+			m.startBackendCheckLocked(ctx, target, check)
 		}
 	}
-
-	// Stop checks for removed backends
-	for address, status := range m.statuses {
-		if !newBackendAddresses[address] {
-			if status.cancel != nil {
-				status.cancel()
-			}
-			delete(m.statuses, address)
-			m.logger.Info("stopped health check for removed backend", zap.String("address", address))
-		}
-	}
+	m.services = newServices
 }
 
-// stopServiceBackendsLocked stops health checks for all backends of a service.
-// Must be called with m.mu held.
-func (m *Manager) stopServiceBackendsLocked(svcCfg config.ServiceConfig) {
-	for _, backend := range svcCfg.Backends {
-		if status, exists := m.statuses[backend.Address]; exists {
-			if status.cancel != nil {
-				status.cancel()
-			}
-			delete(m.statuses, backend.Address)
-			m.logger.Info("stopped health check (service disabled)",
-				zap.String("service", svcCfg.Name),
-				zap.String("address", backend.Address),
-			)
-		}
-	}
-}
-
-// startBackendCheckLocked starts a health check goroutine for a single backend.
-// Must be called with m.mu held.
-func (m *Manager) startBackendCheckLocked(ctx context.Context, address string, svcCheck *serviceCheckConfig) {
+// startBackendCheckLocked must be called with m.mu held.
+func (m *Manager) startBackendCheckLocked(ctx context.Context, target Target, check *serviceCheckConfig) {
 	checkCtx, cancel := context.WithCancel(ctx)
-	status := &backendStatus{
-		address: address,
-		healthy: true,
-		cancel:  cancel,
-	}
-	m.statuses[address] = status
-
-	m.logger.Info("started health check for backend", zap.String("address", address))
-
-	go m.runCheck(checkCtx, address, svcCheck)
+	status := &backendStatus{address: target.Address, healthy: true, cancel: cancel, check: check}
+	m.statuses[target] = status
+	m.logger.Info("started health check", zap.String("service", target.Service), zap.String("address", target.Address))
+	go m.runCheck(checkCtx, target, check)
 }
 
-// runCheck is the health check loop for a single backend.
-// It periodically probes the backend and updates its health status.
-func (m *Manager) runCheck(ctx context.Context, address string, svcCheck *serviceCheckConfig) {
-	ticker := time.NewTicker(svcCheck.interval)
+func (m *Manager) runCheck(ctx context.Context, target Target, check *serviceCheckConfig) {
+	ticker := time.NewTicker(check.interval)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			err := svcCheck.checker.Check(address)
-			m.handleCheckResult(address, err, svcCheck)
+			err := check.checker.Check(target.Address)
+			if ctx.Err() != nil {
+				return
+			}
+			m.handleCheckResult(target, err, check)
 		}
 	}
 }
 
-// handleCheckResult processes a single health check result and updates the backend status.
-// Triggers onChange callback if the health status transitions.
-func (m *Manager) handleCheckResult(address string, checkErr error, svcCheck *serviceCheckConfig) {
+// handleCheckResult ignores results from checks replaced during a config reload.
+func (m *Manager) handleCheckResult(target Target, checkErr error, check *serviceCheckConfig) {
 	m.mu.Lock()
-
-	status, exists := m.statuses[address]
-	if !exists {
+	status, exists := m.statuses[target]
+	if !exists || (status.check != nil && status.check != check) {
 		m.mu.Unlock()
 		return
 	}
-
 	previouslyHealthy := status.healthy
-
 	if checkErr != nil {
-		// Check failed
 		status.consecutiveFails++
 		status.consecutiveOK = 0
-
-		if status.healthy && status.consecutiveFails >= svcCheck.failCount {
+		if status.healthy && status.consecutiveFails >= check.failCount {
 			status.healthy = false
-			m.logger.Warn("backend marked unhealthy",
-				zap.String("address", address),
-				zap.Int("consecutive_fails", status.consecutiveFails),
-				zap.Error(checkErr),
-			)
+			m.logger.Warn("backend marked unhealthy", zap.String("service", target.Service), zap.String("address", target.Address), zap.Error(checkErr))
 		}
 	} else {
-		// Check succeeded
 		status.consecutiveOK++
 		status.consecutiveFails = 0
-
-		if !status.healthy && status.consecutiveOK >= svcCheck.riseCount {
+		if !status.healthy && status.consecutiveOK >= check.riseCount {
 			status.healthy = true
-			m.logger.Info("backend marked healthy",
-				zap.String("address", address),
-				zap.Int("consecutive_ok", status.consecutiveOK),
-			)
+			m.logger.Info("backend marked healthy", zap.String("service", target.Service), zap.String("address", target.Address))
 		}
 	}
-
-	statusChanged := previouslyHealthy != status.healthy
+	changed := previouslyHealthy != status.healthy
 	m.mu.Unlock()
-
-	if statusChanged && m.onChange != nil {
+	if changed && m.onChange != nil {
 		m.onChange()
 	}
 }
 
-// GetAllStatuses returns a copy of all backend health statuses.
-// The key format is "serviceName/backendAddress".
-func (m *Manager) GetAllStatuses() map[string]bool {
+func (m *Manager) GetAllStatuses() map[Target]bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-
-	result := make(map[string]bool, len(m.statuses))
-	for address, status := range m.statuses {
-		result[address] = status.healthy
+	result := make(map[Target]bool, len(m.statuses))
+	for target, status := range m.statuses {
+		result[target] = status.healthy
 	}
 	return result
 }
 
-// Stop cancels all running health check goroutines and clears state.
 func (m *Manager) Stop() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
-	for address, status := range m.statuses {
+	for _, status := range m.statuses {
 		if status.cancel != nil {
 			status.cancel()
 		}
-		m.logger.Debug("stopped health check", zap.String("address", address))
 	}
-
-	m.statuses = make(map[string]*backendStatus)
+	m.statuses = make(map[Target]*backendStatus)
 	m.services = make(map[string]*serviceCheckConfig)
 	m.logger.Info("all health checks stopped")
 }

@@ -107,6 +107,64 @@ func TestValidate_ListenPortZero(t *testing.T) {
 	}
 }
 
+func TestValidate_RejectsInvalidPorts(t *testing.T) {
+	for _, port := range []string{"-1", "0", "65536", "abc"} {
+		t.Run("listen_"+port, func(t *testing.T) {
+			cfg := validConfig()
+			cfg.Services[0].Listen = "10.0.0.1:" + port
+			if err := Validate(cfg); err == nil {
+				t.Fatal("expected invalid listen port to be rejected")
+			}
+		})
+		t.Run("backend_"+port, func(t *testing.T) {
+			cfg := validConfig()
+			cfg.Services[0].Backends[0].Address = "192.168.1.1:" + port
+			if err := Validate(cfg); err == nil {
+				t.Fatal("expected invalid backend port to be rejected")
+			}
+		})
+	}
+}
+
+func TestValidate_RejectsNonPositiveHealthDurations(t *testing.T) {
+	for _, duration := range []string{"0s", "-1s"} {
+		cfg := validConfig()
+		cfg.Services[0].HealthCheck.Interval = duration
+		if err := Validate(cfg); err == nil {
+			t.Fatalf("expected interval %q to be rejected", duration)
+		}
+		cfg = validConfig()
+		cfg.Services[0].HealthCheck.Timeout = duration
+		if err := Validate(cfg); err == nil {
+			t.Fatalf("expected timeout %q to be rejected", duration)
+		}
+	}
+}
+
+func TestValidate_RejectsIPv6FullNAT(t *testing.T) {
+	cfg := validConfig()
+	cfg.Services[0].Listen = "[2001:db8::1]:80"
+	cfg.Services[0].Backends[0].Address = "[2001:db8::2]:8080"
+	cfg.Services[0].FullNAT = true
+	if err := Validate(cfg); err == nil {
+		t.Fatal("expected IPv6 FullNAT to be rejected")
+	}
+}
+
+func TestValidateReload_RejectsRestartOnlySettings(t *testing.T) {
+	current := validConfig()
+	next := validConfig()
+	next.Global.AdminAddress = "127.0.0.1:9095"
+	if err := validateReload(current, next); err == nil {
+		t.Fatal("expected admin address change to require restart")
+	}
+	next = validConfig()
+	next.Global.MetricsInterval = "20s"
+	if err := validateReload(current, next); err != nil {
+		t.Fatalf("expected metrics interval to be reloadable: %v", err)
+	}
+}
+
 func TestValidate_ListenAddressDuplicate(t *testing.T) {
 	svc1 := validServiceConfig()
 	svc2 := validServiceConfig()
@@ -116,6 +174,18 @@ func TestValidate_ListenAddressDuplicate(t *testing.T) {
 	err := Validate(cfg)
 	if err == nil {
 		t.Fatal("expected error for duplicate listen address, got nil")
+	}
+}
+
+func TestValidate_EquivalentIPv6ListenAddressesAreDuplicates(t *testing.T) {
+	first := validServiceConfig()
+	first.Listen = "[2001:db8::1]:80"
+	first.Backends[0].Address = "[2001:db8::2]:8080"
+	second := first
+	second.Name = "second"
+	second.Listen = "[2001:0db8:0:0:0:0:0:1]:080"
+	if err := Validate(&Config{Services: []ServiceConfig{first, second}}); err == nil {
+		t.Fatal("equivalent IP and numeric port must be treated as duplicate")
 	}
 }
 

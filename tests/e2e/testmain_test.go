@@ -16,6 +16,10 @@ import (
 var ezlbBinary string
 
 func TestMain(m *testing.M) {
+	if os.Getenv("EZLB_TEST_EXCLUSIVE_NETNS") != "1" {
+		fmt.Fprintln(os.Stderr, "refusing to flush IPVS: set EZLB_TEST_EXCLUSIVE_NETNS=1 only inside a disposable network namespace")
+		os.Exit(1)
+	}
 	// Build the ezlb binary into a temporary directory
 	tmpDir, err := os.MkdirTemp("", "ezlb-e2e-*")
 	if err != nil {
@@ -28,7 +32,7 @@ func TestMain(m *testing.M) {
 
 	// Compile the binary from the project root
 	// The test runs from tests/e2e/, so the module root is two levels up
-	buildCmd := exec.Command("go", "build", "-tags", "integration", "-o", ezlbBinary, "github.com/easzlab/ezlb/cmd/ezlb")
+	buildCmd := exec.Command("go", "build", "-o", ezlbBinary, "github.com/easzlab/ezlb/cmd/ezlb")
 	buildCmd.Stdout = os.Stdout
 	buildCmd.Stderr = os.Stderr
 	if err := buildCmd.Run(); err != nil {

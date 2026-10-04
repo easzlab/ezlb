@@ -33,15 +33,15 @@ build: ## build the binary
 build-dev: ## build the binary with debug info
 	@echo "Building $(PROJECT_NAME) for development..."
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=1 go build -tags integration -race -o build/ezlb cmd/ezlb/main.go
+	CGO_ENABLED=1 go build -race -o build/ezlb cmd/ezlb/main.go
 	@echo "✓ Development build completed."
 
 .PHONY: build-linux
 build-linux: ## build the binary for Linux
 	@echo "Building for Linux..."
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags integration $(LDFLAGS) -o build/ezlb-linux-amd64 cmd/ezlb/main.go
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -tags integration $(LDFLAGS) -o build/ezlb-linux-arm64 cmd/ezlb/main.go
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o build/ezlb-linux-amd64 cmd/ezlb/main.go
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o build/ezlb-linux-arm64 cmd/ezlb/main.go
 	@echo "✓ Linux build completed"
 
 .PHONY: build-docker
@@ -53,18 +53,18 @@ build-docker: ## build docker image: easzlab/ezlb
 .PHONY: test
 test: ## run unit tests (all platforms, using fake IPVS)
 	@echo "Running unit tests..."
-	@go test -v ./...
+	@go test -tags fake -v ./...
 	@echo "✓ Tests completed"
 
 .PHONY: test-cov
 test-cov: ## run tests with coverage (all platforms, using fake IPVS)
 	@echo "Running tests with coverage..."
-	@go test -v -coverprofile=coverage.out ./...
+	@go test -tags fake -v -coverprofile=coverage.out ./...
 	@go tool cover -html=coverage.out -o coverage.html
 	@echo "✓ Coverage report generated: coverage.html"
 
-# test-linux runs tests with real IPVS handle, serially (-p 1) because IPVS is a global kernel resource.
-# Must be run as root on Linux.
+# test-linux uses real IPVS and clears the current namespace's table. Only run
+# inside an isolated, disposable network namespace with CAP_NET_ADMIN.
 .PHONY: test-linux
 test-linux: ## run unit tests with real IPVS (Linux only)
 	@echo "Running unit tests for linux..."
@@ -72,7 +72,7 @@ test-linux: ## run unit tests with real IPVS (Linux only)
 	@echo "✓ Tests completed"
 
 # e2e tests compile the ezlb binary and verify IPVS kernel rules end-to-end.
-# Must be run as root on Linux.
+# Only run inside an isolated, disposable network namespace with CAP_NET_ADMIN.
 .PHONY: test-e2e
 test-e2e: ## run end-to-end tests for Linux
 	@echo "Running e2e tests for linux..."
@@ -84,6 +84,12 @@ test-docker: ## run tests inside a Docker container
 	@echo "Running containerized tests for macOS/Linux..."
 	@bash tests/e2e/run-e2e-container.sh
 	@echo "✓ Containerized tests completed"
+
+.PHONY: test-compose
+test-compose: ## run real data-plane tests with Docker Compose
+	@echo "Running Docker Compose data-plane tests..."
+	@sh tests/compose/run.sh
+	@echo "✓ Docker Compose tests completed"
 
 .PHONY: clean
 clean: ## clean build artifacts

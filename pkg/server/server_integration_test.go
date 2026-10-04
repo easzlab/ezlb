@@ -1,3 +1,5 @@
+//go:build !linux || fake || integration
+
 package server
 
 import (
@@ -27,7 +29,7 @@ func newControllableHealthChecker() *controllableHealthChecker {
 	}
 }
 
-func (c *controllableHealthChecker) IsHealthy(address string) bool {
+func (c *controllableHealthChecker) IsHealthy(_ string, address string) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	healthy, ok := c.status[address]

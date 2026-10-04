@@ -14,10 +14,15 @@ type ServiceKey struct {
 	Address  string
 	Port     uint16
 	Protocol uint16
+	FWMark   uint32
+	Family   uint16
 }
 
 // String returns a human-readable representation of the ServiceKey.
 func (k ServiceKey) String() string {
+	if k.FWMark != 0 {
+		return fmt.Sprintf("fwmark:%d/family:%d", k.FWMark, k.Family)
+	}
 	return fmt.Sprintf("%s:%d/%s", k.Address, k.Port, protocolToString(k.Protocol))
 }
 
@@ -79,9 +84,16 @@ func ServiceKeyFromConfig(svcCfg config.ServiceConfig) (ServiceKey, error) {
 		return ServiceKey{}, fmt.Errorf("invalid listen address %q: %w", svcCfg.Listen, err)
 	}
 
-	port, err := strconv.Atoi(portStr)
+	port, err := strconv.ParseUint(portStr, 10, 16)
 	if err != nil {
 		return ServiceKey{}, fmt.Errorf("invalid port %q: %w", portStr, err)
+	}
+	if port == 0 {
+		return ServiceKey{}, fmt.Errorf("invalid port %q: must be positive", portStr)
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return ServiceKey{}, fmt.Errorf("invalid IP address %q", host)
 	}
 
 	protocol, err := protocolFromString(svcCfg.Protocol)
@@ -90,7 +102,7 @@ func ServiceKeyFromConfig(svcCfg config.ServiceConfig) (ServiceKey, error) {
 	}
 
 	return ServiceKey{
-		Address:  host,
+		Address:  ip.String(),
 		Port:     uint16(port),
 		Protocol: protocol,
 	}, nil
@@ -98,6 +110,9 @@ func ServiceKeyFromConfig(svcCfg config.ServiceConfig) (ServiceKey, error) {
 
 // ServiceKeyFromIPVS generates a ServiceKey from a Service.
 func ServiceKeyFromIPVS(svc *Service) ServiceKey {
+	if svc.FWMark != 0 {
+		return ServiceKey{FWMark: svc.FWMark, Family: svc.AddressFamily}
+	}
 	return ServiceKey{
 		Address:  svc.Address.String(),
 		Port:     svc.Port,

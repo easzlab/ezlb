@@ -20,4 +20,13 @@ modprobe ip_vs_dh
 modprobe nf_conntrack
 echo "==> IPVS modules loaded."
 
+# FullNAT's conntrack tuple match and NAT forwarding require these namespaced
+# kernel parameters. They are set only inside this disposable container.
+sysctl -w net.ipv4.ip_forward=1
+sysctl -w net.ipv4.vs.conntrack=1
+
+# TestMain flushes the entire IPVS table. This flag is deliberately set only
+# by the isolated container entrypoint, never by the Makefile.
+export EZLB_TEST_EXCLUSIVE_NETNS=1
+
 exec "$@"

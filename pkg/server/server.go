@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/easzlab/ezlb/pkg/admin"
@@ -19,18 +21,23 @@ import (
 // triggered by rapid health state flips are coalesced into a single reconcile pass.
 const reconcileDebounceWindow = 200 * time.Millisecond
 
+const defaultReconcileInterval = 30 * time.Second
+
 // Server coordinates all modules and manages the overall service lifecycle.
 type Server struct {
-	configMgr            *config.Manager
-	lvsMgr               *lvs.Manager
-	reconciler           *lvs.Reconciler
-	healthMgr            *healthcheck.Manager
-	snatMgr              snat.Manager
-	adminServer          *admin.Server
-	logger               *zap.Logger
-	collector            *trafficmetrics.Collector
-	reconcileSignal      chan struct{}
-	prevHealthBackends   map[healthMetricKey]struct{}
+	configMgr          *config.Manager
+	lvsMgr             *lvs.Manager
+	reconciler         *lvs.Reconciler
+	healthMgr          *healthcheck.Manager
+	snatMgr            snat.Manager
+	adminServer        *admin.Server
+	logger             *zap.Logger
+	collector          *trafficmetrics.Collector
+	reconcileSignal    chan struct{}
+	prevHealthBackends map[healthMetricKey]struct{}
+	healthMetricsMu    sync.Mutex
+	reconcileInterval  time.Duration
+	ready              atomic.Bool
 }
 
 type healthMetricKey struct {
@@ -65,11 +72,12 @@ func newServerWithManager(configPath string, lvsMgr *lvs.Manager, logger *zap.Lo
 	}
 
 	server := &Server{
-		configMgr:       configMgr,
-		lvsMgr:          lvsMgr,
-		snatMgr:         snatMgr,
-		logger:          logger,
-		reconcileSignal: make(chan struct{}, 1),
+		configMgr:         configMgr,
+		lvsMgr:            lvsMgr,
+		snatMgr:           snatMgr,
+		logger:            logger,
+		reconcileSignal:   make(chan struct{}, 1),
+		reconcileInterval: defaultReconcileInterval,
 	}
 
 	// Initialize health check manager with onChange callback that triggers reconcile
@@ -98,13 +106,15 @@ func (s *Server) Run(ctx context.Context) error {
 	// Set up config reload callback for metrics
 	s.configMgr.SetOnReloadCallback(func() {
 		metrics.IncConfigReload()
+		s.ready.Store(false)
 	})
 
 	// Register health check targets and start checking
 	s.healthMgr.UpdateTargets(ctx, cfg.Services)
+	s.updateHealthMetrics()
 
 	// Perform initial reconcile
-	if err := s.reconciler.Reconcile(cfg.Services); err != nil {
+	if err := s.reconcileServices(cfg.Services); err != nil {
 		s.logger.Error("initial reconcile failed", zap.Error(err))
 	}
 
@@ -113,6 +123,8 @@ func (s *Server) Run(ctx context.Context) error {
 	// Start config file watching
 	s.configMgr.WatchConfig()
 	s.logger.Info("config watcher started")
+	resync := time.NewTicker(s.reconcileInterval)
+	defer resync.Stop()
 
 	// Main event loop
 	s.logger.Info("server started, entering main loop")
@@ -122,7 +134,8 @@ func (s *Server) Run(ctx context.Context) error {
 			s.logger.Info("config change detected, triggering reconcile")
 			newCfg := s.configMgr.GetConfig()
 			s.healthMgr.UpdateTargets(ctx, newCfg.Services)
-			if err := s.reconciler.Reconcile(newCfg.Services); err != nil {
+			s.updateHealthMetrics()
+			if err := s.reconcileServices(newCfg.Services); err != nil {
 				s.logger.Error("reconcile after config change failed", zap.Error(err))
 			}
 			s.syncTrafficCollector(newCfg)
@@ -132,8 +145,14 @@ func (s *Server) Run(ctx context.Context) error {
 			// within the debounce window and perform a single reconcile pass.
 			s.drainReconcileSignals(ctx)
 			cfg := s.configMgr.GetConfig()
-			if err := s.reconciler.Reconcile(cfg.Services); err != nil {
+			if err := s.reconcileServices(cfg.Services); err != nil {
 				s.logger.Error("reconcile after health change failed", zap.Error(err))
+			}
+
+		case <-resync.C:
+			cfg := s.configMgr.GetConfig()
+			if err := s.reconcileServices(cfg.Services); err != nil {
+				s.logger.Error("periodic reconcile failed", zap.Error(err))
 			}
 
 		case <-ctx.Done():
@@ -142,6 +161,16 @@ func (s *Server) Run(ctx context.Context) error {
 			return nil
 		}
 	}
+}
+
+func (s *Server) reconcileServices(services []config.ServiceConfig) error {
+	if err := checkFullNATKernelParams(services); err != nil {
+		s.ready.Store(false)
+		return err
+	}
+	err := s.reconciler.Reconcile(services)
+	s.ready.Store(err == nil)
+	return err
 }
 
 // drainReconcileSignals waits up to reconcileDebounceWindow and consumes any
@@ -170,7 +199,7 @@ func (s *Server) RunOnce() error {
 	cfg := s.configMgr.GetConfig()
 	s.logKernelParamPreflight()
 
-	err := s.reconciler.Reconcile(cfg.Services)
+	err := s.reconcileServices(cfg.Services)
 	s.lvsMgr.Close()
 
 	if err != nil {
@@ -193,26 +222,15 @@ func (s *Server) triggerReconcile() {
 // updateHealthMetrics updates the health status metrics for all backends
 // and removes stale metrics for backends no longer in the config.
 func (s *Server) updateHealthMetrics() {
-	cfg := s.configMgr.GetConfig()
+	s.healthMetricsMu.Lock()
+	defer s.healthMetricsMu.Unlock()
 	statuses := s.healthMgr.GetAllStatuses()
-
-	// Build a map of backend address to service name
-	backendToService := make(map[string]string)
-	for _, svc := range cfg.Services {
-		for _, backend := range svc.Backends {
-			backendToService[backend.Address] = svc.Name
-		}
-	}
 
 	// Update metrics for each backend and track current keys
 	currentBackends := make(map[healthMetricKey]struct{})
-	for address, healthy := range statuses {
-		serviceName := backendToService[address]
-		if serviceName == "" {
-			serviceName = "unknown"
-		}
-		metrics.SetBackendHealth(serviceName, address, healthy)
-		currentBackends[healthMetricKey{service: serviceName, backend: address}] = struct{}{}
+	for target, healthy := range statuses {
+		metrics.SetBackendHealth(target.Service, target.Address, healthy)
+		currentBackends[healthMetricKey{service: target.Service, backend: target.Address}] = struct{}{}
 	}
 
 	// Delete stale health metrics for removed backends
@@ -274,7 +292,15 @@ func (s *Server) initAdminServer(cfg *config.Config) {
 
 	// Set up health check function for admin server
 	s.adminServer.SetHealthCheckFunc(func() map[string]bool {
-		return s.healthMgr.GetAllStatuses()
+		statuses := s.healthMgr.GetAllStatuses()
+		result := make(map[string]bool, len(statuses))
+		for target, healthy := range statuses {
+			result[target.Service+"/"+target.Address] = healthy
+		}
+		return result
+	})
+	s.adminServer.SetReadyCheckFunc(func() bool {
+		return s.ready.Load()
 	})
 
 	if err := s.adminServer.Start(); err != nil {

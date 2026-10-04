@@ -4,29 +4,29 @@ import "fmt"
 
 // SNATRule describes a single SNAT/MASQUERADE rule for a backend destination.
 type SNATRule struct {
+	VIP         string
 	BackendIP   string
 	Protocol    string
 	SnatIP      string
+	VIPPort     uint16
 	BackendPort uint16
 }
 
 // Key returns a unique string identifier for this rule.
 func (r SNATRule) Key() string {
-	return fmt.Sprintf("%s:%d/%s", r.BackendIP, r.BackendPort, r.Protocol)
+	return fmt.Sprintf("%s:%d/%s->%s:%d", r.VIP, r.VIPPort, r.Protocol, r.BackendIP, r.BackendPort)
 }
 
-// ForwardRule describes a FORWARD chain ACCEPT rule for a backend destination.
-// This is needed because IPVS NAT mode requires packets to traverse the FORWARD
-// chain, which may have a DROP policy (e.g. when Docker is installed).
+// ForwardRule allows both directions of one IPVS service through FORWARD.
 type ForwardRule struct {
-	BackendIP   string
-	Protocol    string
-	BackendPort uint16
+	VIP      string
+	Protocol string
+	VIPPort  uint16
 }
 
 // Key returns a unique string identifier for this forward rule.
 func (r ForwardRule) Key() string {
-	return fmt.Sprintf("%s:%d/%s", r.BackendIP, r.BackendPort, r.Protocol)
+	return fmt.Sprintf("%s:%d/%s", r.VIP, r.VIPPort, r.Protocol)
 }
 
 // Manager defines the interface for managing iptables SNAT and FORWARD rules.

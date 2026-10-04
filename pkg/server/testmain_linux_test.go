@@ -1,4 +1,4 @@
-//go:build integration
+//go:build linux && integration
 
 package server
 
@@ -11,6 +11,10 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if os.Getenv("EZLB_TEST_EXCLUSIVE_NETNS") != "1" {
+		fmt.Fprintln(os.Stderr, "refusing to flush IPVS: set EZLB_TEST_EXCLUSIVE_NETNS=1 only inside a disposable network namespace")
+		os.Exit(1)
+	}
 	// Flush all IPVS rules before running tests to ensure a clean state.
 	handle, err := lvs.NewIPVSHandle("")
 	if err != nil {

@@ -1,0 +1,55 @@
+name: ezlb-compose-test
+
+services:
+  backend-a:
+    build:
+      context: .
+      dockerfile: tests/compose/Dockerfile
+    command: ["/usr/local/bin/ezlb-compose-backend", "--name", "backend-a"]
+    networks:
+      testnet:
+        ipv4_address: 172.30.0.11
+
+  backend-b:
+    build:
+      context: .
+      dockerfile: tests/compose/Dockerfile
+    command: ["/usr/local/bin/ezlb-compose-backend", "--name", "backend-b"]
+    networks:
+      testnet:
+        ipv4_address: 172.30.0.12
+
+  ezlb:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["/bin/sh", "/test/ezlb-entrypoint.sh"]
+    privileged: true
+    volumes:
+      - /lib/modules:/lib/modules:ro
+      - ./tests/compose/ezlb.yaml:/test/ezlb.yaml:ro
+      - ./tests/compose/ezlb-entrypoint.sh:/test/ezlb-entrypoint.sh:ro
+    depends_on:
+      - backend-a
+      - backend-b
+    networks:
+      testnet:
+        ipv4_address: 172.30.0.10
+
+  verifier:
+    build:
+      context: .
+      dockerfile: tests/compose/Dockerfile
+    command: ["/usr/local/bin/ezlb-compose-verifier"]
+    depends_on:
+      - ezlb
+    networks:
+      testnet:
+        ipv4_address: 172.30.0.20
+
+networks:
+  testnet:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24

@@ -1,4 +1,4 @@
-//go:build !integration
+//go:build !linux || fake
 
 package lvs
 
@@ -51,18 +51,14 @@ func TestReconcile_FullNATGeneratesSNATRules(t *testing.T) {
 		t.Fatalf("expected 2 SNAT rules, got %d", len(managed))
 	}
 
-	// Verify FORWARD rules were created via fake manager
+	// The return-traffic rule is scoped to the VIP, not each backend.
 	managedForward := fakeSnatMgr.GetManagedForward()
-	if len(managedForward) != 2 {
-		t.Fatalf("expected 2 FORWARD rules, got %d", len(managedForward))
+	if len(managedForward) != 1 {
+		t.Fatalf("expected 1 FORWARD rule, got %d", len(managedForward))
 	}
-	forwardKey1 := "192.168.1.1:53/udp"
+	forwardKey1 := "10.0.0.1:53/udp"
 	if _, exists := managedForward[forwardKey1]; !exists {
 		t.Errorf("expected FORWARD rule %q to exist", forwardKey1)
-	}
-	forwardKey2 := "192.168.1.2:53/udp"
-	if _, exists := managedForward[forwardKey2]; !exists {
-		t.Errorf("expected FORWARD rule %q to exist", forwardKey2)
 	}
 }
 

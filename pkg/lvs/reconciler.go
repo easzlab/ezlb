@@ -16,7 +16,7 @@ import (
 // HealthChecker is the interface used by Reconciler to query backend health status.
 // This decouples the lvs package from the healthcheck package.
 type HealthChecker interface {
-	IsHealthy(address string) bool
+	IsHealthy(service, address string) bool
 }
 
 // managedServiceInfo stores config metadata for a managed service,
@@ -35,7 +35,7 @@ type Reconciler struct {
 	healthMgr HealthChecker
 	snatMgr   snat.Manager
 	logger    *zap.Logger
-	managed   map[ServiceKey]*managedServiceInfo // tracks services managed by ezlb
+	managed   map[ServiceKey]*managedServiceInfo // metadata for metrics cleanup in this process
 	mu        sync.Mutex
 }
 
@@ -80,13 +80,8 @@ func (r *Reconciler) Reconcile(desiredConfigs []config.ServiceConfig) error {
 	actualMap := make(map[ServiceKey]*Service)
 	for _, svc := range actualServices {
 		key := ServiceKeyFromIPVS(svc)
-		// Include services that are either managed by ezlb or present in the
-		// desired state. This ensures that `once` mode (fresh Reconciler with
-		// empty managed map) can still detect and update pre-existing IPVS
-		// services that match the current config, avoiding duplicate creation.
-		if r.managed[key] != nil || desiredMap[key] != nil {
-			actualMap[key] = svc
-		}
+		// ezlb owns the complete IPVS table in its dedicated network namespace.
+		actualMap[key] = svc
 	}
 
 	var reconcileErrors []error
@@ -119,7 +114,7 @@ func (r *Reconciler) Reconcile(desiredConfigs []config.ServiceConfig) error {
 		}
 	}
 
-	// Delete services that are in actual (and managed by ezlb) but not in desired
+	// Delete services that are in actual but not in desired.
 	for key, actual := range actualMap {
 		if _, exists := desiredMap[key]; !exists {
 			if err := r.manager.DeleteService(actual); err != nil {
@@ -154,9 +149,7 @@ func (r *Reconciler) Reconcile(desiredConfigs []config.ServiceConfig) error {
 	return nil
 }
 
-// Cleanup removes all IPVS services currently managed by this Reconciler.
-// It only deletes services tracked in the managed map, leaving other IPVS
-// rules untouched.
+// Cleanup removes all IPVS services in ezlb's dedicated network namespace.
 func (r *Reconciler) Cleanup() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -172,12 +165,7 @@ func (r *Reconciler) Cleanup() error {
 	}
 
 	var errs []error
-	for key := range r.managed {
-		svc, exists := actualMap[key]
-		if !exists {
-			delete(r.managed, key)
-			continue
-		}
+	for key, svc := range actualMap {
 		if err := r.manager.DeleteService(svc); err != nil {
 			errs = append(errs, fmt.Errorf("delete service %s: %w", key, err))
 		} else {
@@ -188,7 +176,8 @@ func (r *Reconciler) Cleanup() error {
 	if len(errs) > 0 {
 		return errors.Join(errs...)
 	}
-	r.logger.Info("cleaned up all managed IPVS services")
+	r.managed = make(map[ServiceKey]*managedServiceInfo)
+	r.logger.Info("cleaned up all IPVS services in the network namespace")
 	return nil
 }
 
@@ -217,12 +206,26 @@ func (r *Reconciler) reconcileSNAT(configs []config.ServiceConfig) error {
 		if !svcCfg.FullNAT {
 			continue
 		}
+		vip, vipPortStr, err := net.SplitHostPort(svcCfg.Listen)
+		if err != nil {
+			return fmt.Errorf("service %q: invalid listen address: %w", svcCfg.Name, err)
+		}
+		vipPort, err := strconv.Atoi(vipPortStr)
+		if err != nil {
+			return fmt.Errorf("service %q: invalid listen port: %w", svcCfg.Name, err)
+		}
+		protocol := svcCfg.Protocol
+		if protocol == "" {
+			protocol = "tcp"
+		}
+		hasHealthyBackend := false
 
 		for _, backendCfg := range svcCfg.Backends {
 			// Only create rules for healthy backends
-			if svcCfg.HealthCheck.IsEnabled() && !r.healthMgr.IsHealthy(backendCfg.Address) {
+			if svcCfg.HealthCheck.IsEnabled() && !r.healthMgr.IsHealthy(svcCfg.Name, backendCfg.Address) {
 				continue
 			}
+			hasHealthyBackend = true
 
 			backendHost, backendPortStr, err := net.SplitHostPort(backendCfg.Address)
 			if err != nil {
@@ -233,22 +236,21 @@ func (r *Reconciler) reconcileSNAT(configs []config.ServiceConfig) error {
 				return fmt.Errorf("service %q, backend %q: invalid port: %w", svcCfg.Name, backendCfg.Address, err)
 			}
 
-			protocol := svcCfg.Protocol
-			if protocol == "" {
-				protocol = "tcp"
-			}
-
 			desiredSNATRules = append(desiredSNATRules, snat.SNATRule{
+				VIP:         vip,
+				VIPPort:     uint16(vipPort),
 				BackendIP:   backendHost,
 				BackendPort: uint16(backendPort),
 				Protocol:    protocol,
 				SnatIP:      svcCfg.SnatIP,
 			})
 
+		}
+		if hasHealthyBackend {
 			desiredForwardRules = append(desiredForwardRules, snat.ForwardRule{
-				BackendIP:   backendHost,
-				BackendPort: uint16(backendPort),
-				Protocol:    protocol,
+				VIP:      vip,
+				VIPPort:  uint16(vipPort),
+				Protocol: protocol,
 			})
 		}
 	}
@@ -283,7 +285,7 @@ func (r *Reconciler) buildDesiredState(configs []config.ServiceConfig) (map[Serv
 		var destinations []*Destination
 		for _, backendCfg := range svcCfg.Backends {
 			// Filter out unhealthy backends (only when health check is enabled)
-			if svcCfg.HealthCheck.IsEnabled() && !r.healthMgr.IsHealthy(backendCfg.Address) {
+			if svcCfg.HealthCheck.IsEnabled() && !r.healthMgr.IsHealthy(svcCfg.Name, backendCfg.Address) {
 				r.logger.Info("skipping unhealthy backend",
 					zap.String("service", svcCfg.Name),
 					zap.String("backend", backendCfg.Address),

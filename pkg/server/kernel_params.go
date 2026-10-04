@@ -1,12 +1,42 @@
 package server
 
 import (
+	"fmt"
 	"os"
 	"runtime"
 	"strings"
 
+	"github.com/easzlab/ezlb/pkg/config"
 	"go.uber.org/zap"
 )
+
+// FullNAT's conntrack-original-tuple iptables rules cannot match when IPVS
+// conntrack is disabled. Keep the data plane unready until prerequisites hold.
+func checkFullNATKernelParams(services []config.ServiceConfig) error {
+	if !kernelParamCheckEnabled {
+		return nil
+	}
+	needed := false
+	for _, svc := range services {
+		if svc.FullNAT {
+			needed = true
+			break
+		}
+	}
+	if !needed {
+		return nil
+	}
+	for _, name := range []string{"net.ipv4.ip_forward", "net.ipv4.vs.conntrack"} {
+		raw, err := readKernelParamFile(kernelParamPath(name))
+		if err != nil {
+			return fmt.Errorf("full_nat requires %s=1: %w", name, err)
+		}
+		if actual := strings.TrimSpace(string(raw)); actual != "1" {
+			return fmt.Errorf("full_nat requires %s=1, got %q", name, actual)
+		}
+	}
+	return nil
+}
 
 type kernelParamCheck struct {
 	expecteds map[string]struct{}

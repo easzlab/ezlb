@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -194,6 +195,26 @@ func TestHandleHealthMethodNotAllowed(t *testing.T) {
 
 	if resp.StatusCode != http.StatusMethodNotAllowed {
 		t.Errorf("expected status 405, got %d", resp.StatusCode)
+	}
+}
+
+func TestHandleReady(t *testing.T) {
+	ready := false
+	server := NewServer(Config{}, zap.NewNop())
+	server.SetReadyCheckFunc(func() bool { return ready })
+	for _, tc := range []struct {
+		ready bool
+		code  int
+	}{
+		{false, http.StatusServiceUnavailable},
+		{true, http.StatusOK},
+	} {
+		ready = tc.ready
+		response := httptest.NewRecorder()
+		server.handleReady(response, httptest.NewRequest(http.MethodGet, "/ready", nil))
+		if response.Code != tc.code {
+			t.Fatalf("ready=%t: got %d, want %d", ready, response.Code, tc.code)
+		}
 	}
 }
 

@@ -61,6 +61,86 @@ services:
 	}
 }
 
+func TestE2E_RequiresExclusiveNamespaceAcknowledgement(t *testing.T) {
+	cmd := exec.Command(ezlbBinary, "once", "-c", "missing.yaml")
+	output, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "--exclusive-netns is required") {
+		t.Fatalf("expected namespace acknowledgement error, got %v: %s", err, output)
+	}
+}
+
+func TestE2E_FullNATRulesAreScopedAndRecoveredAfterRestart(t *testing.T) {
+	flushIPVS(t)
+	defer flushIPVS(t)
+	dir := t.TempDir()
+	configPath := writeTestConfig(t, dir, `
+services:
+  - name: first
+    listen: 10.0.0.1:80
+    protocol: tcp
+    scheduler: rr
+    full_nat: true
+    snat_ip: 10.0.0.11
+    health_check:
+      enabled: false
+    backends:
+      - address: 192.168.1.10:8080
+        weight: 1
+  - name: second
+    listen: 10.0.0.2:80
+    protocol: tcp
+    scheduler: rr
+    full_nat: true
+    snat_ip: 10.0.0.12
+    health_check:
+      enabled: false
+    backends:
+      - address: 192.168.1.10:8080
+        weight: 1
+`)
+	runEzlbOnce(t, configPath)
+	snatRules := iptablesChainRules(t, "nat", "EZLB-SNAT")
+	for _, want := range []string{"--ctorigdst 10.0.0.1", "--ctorigdst 10.0.0.2", "--to-source 10.0.0.11", "--to-source 10.0.0.12"} {
+		if !strings.Contains(snatRules, want) {
+			t.Fatalf("missing %q in SNAT rules:\n%s", want, snatRules)
+		}
+	}
+	forwardRules := iptablesChainRules(t, "filter", "EZLB-FORWARD")
+	if strings.Count(forwardRules, "--ctorigdst ") != 2 {
+		t.Fatalf("expected two service-scoped FORWARD rules:\n%s", forwardRules)
+	}
+
+	// A new process must remove stale rules, even without any in-memory state.
+	writeTestConfig(t, dir, `
+services:
+  - name: first
+    listen: 10.0.0.1:80
+    protocol: tcp
+    scheduler: rr
+    full_nat: true
+    snat_ip: 10.0.0.11
+    health_check:
+      enabled: false
+    backends:
+      - address: 192.168.1.10:8080
+        weight: 1
+`)
+	runEzlbOnce(t, configPath)
+	snatRules = iptablesChainRules(t, "nat", "EZLB-SNAT")
+	if strings.Contains(snatRules, "10.0.0.2") || strings.Count(snatRules, "--ctorigdst ") != 1 {
+		t.Fatalf("stale SNAT rule remained after restart:\n%s", snatRules)
+	}
+}
+
+func iptablesChainRules(t *testing.T, table, chain string) string {
+	t.Helper()
+	output, err := exec.Command("iptables", "-t", table, "-S", chain).CombinedOutput()
+	if err != nil {
+		t.Fatalf("iptables %s/%s: %v: %s", table, chain, err, output)
+	}
+	return string(output)
+}
+
 // --- Test 2: Multiple services with different schedulers ---
 
 func TestE2E_OnceMode_MultiService(t *testing.T) {
@@ -260,12 +340,8 @@ services:
 }
 
 // --- Test 5: Service removal between two once executions ---
-// Note: In `once` mode, each execution creates a fresh Reconciler with an empty
-// `managed` map. The Reconciler only tracks services it creates during the current
-// run, so it will NOT delete services from a previous run that are no longer in
-// the config. This test verifies this actual behavior: after removing a service
-// from config and running `once` again, the old service still exists in IPVS
-// because the new Reconciler doesn't know about it.
+// The dedicated network namespace is fully owned by ezlb, so a new process
+// removes services left by a previous process when they leave the config.
 
 func TestE2E_OnceMode_ServiceRemoval(t *testing.T) {
 	flushIPVS(t)
@@ -319,14 +395,12 @@ services:
 `
 	writeTestConfig(t, dir, updatedYAML)
 
-	// Second execution: the new Reconciler's managed map is empty,
-	// so it will create/update web-service but NOT delete api-service.
-	// Both services remain in IPVS.
+	// Second execution removes api-service from the namespace.
 	runEzlbOnce(t, configPath)
 
 	services := getIPVSServices(t)
-	if len(services) != 2 {
-		t.Fatalf("expected 2 IPVS services (once mode does not clean up unmanaged services), got %d", len(services))
+	if len(services) != 1 {
+		t.Fatalf("expected 1 IPVS service after removal, got %d", len(services))
 	}
 
 	// Verify web-service still exists and is correct
@@ -335,10 +409,10 @@ services:
 		t.Fatal("expected web-service (10.0.0.1:80) to still exist")
 	}
 
-	// Verify api-service still exists (orphaned from previous run)
+	// Verify api-service was pruned.
 	apiSvc := findServiceByAddress(services, "10.0.0.2", 443)
-	if apiSvc == nil {
-		t.Fatal("expected api-service (10.0.0.2:443) to still exist (once mode does not clean up)")
+	if apiSvc != nil {
+		t.Fatal("api-service should be removed from the dedicated namespace")
 	}
 }
 

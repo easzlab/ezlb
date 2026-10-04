@@ -1,4 +1,4 @@
-//go:build !integration
+//go:build !linux || fake
 
 package snat
 
@@ -10,12 +10,14 @@ import (
 
 func TestSNATRuleKey(t *testing.T) {
 	rule := SNATRule{
+		VIP:         "10.0.0.1",
+		VIPPort:     80,
 		BackendIP:   "192.168.1.1",
 		BackendPort: 8080,
 		Protocol:    "tcp",
 		SnatIP:      "10.0.0.1",
 	}
-	expected := "192.168.1.1:8080/tcp"
+	expected := "10.0.0.1:80/tcp->192.168.1.1:8080"
 	if rule.Key() != expected {
 		t.Errorf("expected key %q, got %q", expected, rule.Key())
 	}
@@ -28,8 +30,8 @@ func TestFakeManager_ReconcileAddRules(t *testing.T) {
 	}
 
 	desired := []SNATRule{
-		{BackendIP: "192.168.1.1", BackendPort: 8080, Protocol: "tcp", SnatIP: "10.0.0.1"},
-		{BackendIP: "192.168.1.2", BackendPort: 8080, Protocol: "tcp", SnatIP: ""},
+		{VIP: "10.0.0.1", VIPPort: 80, BackendIP: "192.168.1.1", BackendPort: 8080, Protocol: "tcp", SnatIP: "10.0.0.1"},
+		{VIP: "10.0.0.1", VIPPort: 80, BackendIP: "192.168.1.2", BackendPort: 8080, Protocol: "tcp", SnatIP: ""},
 	}
 
 	if err := mgr.Reconcile(desired); err != nil {
@@ -42,7 +44,7 @@ func TestFakeManager_ReconcileAddRules(t *testing.T) {
 		t.Fatalf("expected 2 managed rules, got %d", len(managed))
 	}
 
-	rule1, exists := managed["192.168.1.1:8080/tcp"]
+	rule1, exists := managed["10.0.0.1:80/tcp->192.168.1.1:8080"]
 	if !exists {
 		t.Fatal("expected rule 192.168.1.1:8080/tcp to exist")
 	}
@@ -50,7 +52,7 @@ func TestFakeManager_ReconcileAddRules(t *testing.T) {
 		t.Errorf("expected snat_ip '10.0.0.1', got %q", rule1.SnatIP)
 	}
 
-	rule2, exists := managed["192.168.1.2:8080/tcp"]
+	rule2, exists := managed["10.0.0.1:80/tcp->192.168.1.2:8080"]
 	if !exists {
 		t.Fatal("expected rule 192.168.1.2:8080/tcp to exist")
 	}
@@ -67,8 +69,8 @@ func TestFakeManager_ReconcileRemoveStaleRules(t *testing.T) {
 
 	// First reconcile: add 2 rules
 	initial := []SNATRule{
-		{BackendIP: "192.168.1.1", BackendPort: 8080, Protocol: "tcp", SnatIP: "10.0.0.1"},
-		{BackendIP: "192.168.1.2", BackendPort: 8080, Protocol: "tcp", SnatIP: "10.0.0.1"},
+		{VIP: "10.0.0.1", VIPPort: 80, BackendIP: "192.168.1.1", BackendPort: 8080, Protocol: "tcp", SnatIP: "10.0.0.1"},
+		{VIP: "10.0.0.1", VIPPort: 80, BackendIP: "192.168.1.2", BackendPort: 8080, Protocol: "tcp", SnatIP: "10.0.0.1"},
 	}
 	if err := mgr.Reconcile(initial); err != nil {
 		t.Fatalf("first Reconcile failed: %v", err)
@@ -76,7 +78,7 @@ func TestFakeManager_ReconcileRemoveStaleRules(t *testing.T) {
 
 	// Second reconcile: only 1 rule desired
 	desired := []SNATRule{
-		{BackendIP: "192.168.1.1", BackendPort: 8080, Protocol: "tcp", SnatIP: "10.0.0.1"},
+		{VIP: "10.0.0.1", VIPPort: 80, BackendIP: "192.168.1.1", BackendPort: 8080, Protocol: "tcp", SnatIP: "10.0.0.1"},
 	}
 	if err := mgr.Reconcile(desired); err != nil {
 		t.Fatalf("second Reconcile failed: %v", err)
@@ -87,7 +89,7 @@ func TestFakeManager_ReconcileRemoveStaleRules(t *testing.T) {
 	if len(managed) != 1 {
 		t.Fatalf("expected 1 managed rule after removal, got %d", len(managed))
 	}
-	if _, exists := managed["192.168.1.2:8080/tcp"]; exists {
+	if _, exists := managed["10.0.0.1:80/tcp->192.168.1.2:8080"]; exists {
 		t.Error("expected rule 192.168.1.2:8080/tcp to be removed")
 	}
 }
@@ -100,7 +102,7 @@ func TestFakeManager_ReconcileUpdateSnatIP(t *testing.T) {
 
 	// First reconcile with SNAT IP
 	initial := []SNATRule{
-		{BackendIP: "192.168.1.1", BackendPort: 8080, Protocol: "tcp", SnatIP: "10.0.0.1"},
+		{VIP: "10.0.0.1", VIPPort: 80, BackendIP: "192.168.1.1", BackendPort: 8080, Protocol: "tcp", SnatIP: "10.0.0.1"},
 	}
 	if err := mgr.Reconcile(initial); err != nil {
 		t.Fatalf("first Reconcile failed: %v", err)
@@ -108,7 +110,7 @@ func TestFakeManager_ReconcileUpdateSnatIP(t *testing.T) {
 
 	// Second reconcile: change to MASQUERADE
 	updated := []SNATRule{
-		{BackendIP: "192.168.1.1", BackendPort: 8080, Protocol: "tcp", SnatIP: ""},
+		{VIP: "10.0.0.1", VIPPort: 80, BackendIP: "192.168.1.1", BackendPort: 8080, Protocol: "tcp", SnatIP: ""},
 	}
 	if err := mgr.Reconcile(updated); err != nil {
 		t.Fatalf("second Reconcile failed: %v", err)
@@ -116,7 +118,7 @@ func TestFakeManager_ReconcileUpdateSnatIP(t *testing.T) {
 
 	fakeMgr := mgr.(*FakeManager)
 	managed := fakeMgr.GetManaged()
-	rule := managed["192.168.1.1:8080/tcp"]
+	rule := managed["10.0.0.1:80/tcp->192.168.1.1:8080"]
 	if rule.SnatIP != "" {
 		t.Errorf("expected empty snat_ip after update, got %q", rule.SnatIP)
 	}
@@ -129,7 +131,7 @@ func TestFakeManager_Cleanup(t *testing.T) {
 	}
 
 	desired := []SNATRule{
-		{BackendIP: "192.168.1.1", BackendPort: 8080, Protocol: "tcp", SnatIP: "10.0.0.1"},
+		{VIP: "10.0.0.1", VIPPort: 80, BackendIP: "192.168.1.1", BackendPort: 8080, Protocol: "tcp", SnatIP: "10.0.0.1"},
 	}
 	if err := mgr.Reconcile(desired); err != nil {
 		t.Fatalf("Reconcile failed: %v", err)
@@ -154,7 +156,7 @@ func TestFakeManager_ReconcileEmptyDesired(t *testing.T) {
 
 	// Add some rules first
 	initial := []SNATRule{
-		{BackendIP: "192.168.1.1", BackendPort: 8080, Protocol: "tcp", SnatIP: "10.0.0.1"},
+		{VIP: "10.0.0.1", VIPPort: 80, BackendIP: "192.168.1.1", BackendPort: 8080, Protocol: "tcp", SnatIP: "10.0.0.1"},
 	}
 	if err := mgr.Reconcile(initial); err != nil {
 		t.Fatalf("first Reconcile failed: %v", err)
@@ -174,11 +176,11 @@ func TestFakeManager_ReconcileEmptyDesired(t *testing.T) {
 
 func TestForwardRuleKey(t *testing.T) {
 	rule := ForwardRule{
-		BackendIP:   "192.168.1.1",
-		BackendPort: 8080,
-		Protocol:    "tcp",
+		VIP:      "10.0.0.1",
+		VIPPort:  80,
+		Protocol: "tcp",
 	}
-	expected := "192.168.1.1:8080/tcp"
+	expected := "10.0.0.1:80/tcp"
 	if rule.Key() != expected {
 		t.Errorf("expected key %q, got %q", expected, rule.Key())
 	}
@@ -191,8 +193,8 @@ func TestFakeManager_ReconcileForwardAddRules(t *testing.T) {
 	}
 
 	desired := []ForwardRule{
-		{BackendIP: "192.168.1.1", BackendPort: 8080, Protocol: "tcp"},
-		{BackendIP: "192.168.1.2", BackendPort: 8080, Protocol: "tcp"},
+		{VIP: "10.0.0.1", VIPPort: 80, Protocol: "tcp"},
+		{VIP: "10.0.0.2", VIPPort: 80, Protocol: "tcp"},
 	}
 
 	if err := mgr.ReconcileForward(desired); err != nil {
@@ -205,10 +207,10 @@ func TestFakeManager_ReconcileForwardAddRules(t *testing.T) {
 		t.Fatalf("expected 2 managed FORWARD rules, got %d", len(managed))
 	}
 
-	if _, exists := managed["192.168.1.1:8080/tcp"]; !exists {
+	if _, exists := managed["10.0.0.1:80/tcp"]; !exists {
 		t.Fatal("expected FORWARD rule 192.168.1.1:8080/tcp to exist")
 	}
-	if _, exists := managed["192.168.1.2:8080/tcp"]; !exists {
+	if _, exists := managed["10.0.0.2:80/tcp"]; !exists {
 		t.Fatal("expected FORWARD rule 192.168.1.2:8080/tcp to exist")
 	}
 }
@@ -221,8 +223,8 @@ func TestFakeManager_ReconcileForwardRemoveStaleRules(t *testing.T) {
 
 	// First reconcile: add 2 rules
 	initial := []ForwardRule{
-		{BackendIP: "192.168.1.1", BackendPort: 8080, Protocol: "tcp"},
-		{BackendIP: "192.168.1.2", BackendPort: 8080, Protocol: "tcp"},
+		{VIP: "10.0.0.1", VIPPort: 80, Protocol: "tcp"},
+		{VIP: "10.0.0.2", VIPPort: 80, Protocol: "tcp"},
 	}
 	if err := mgr.ReconcileForward(initial); err != nil {
 		t.Fatalf("first ReconcileForward failed: %v", err)
@@ -230,7 +232,7 @@ func TestFakeManager_ReconcileForwardRemoveStaleRules(t *testing.T) {
 
 	// Second reconcile: only 1 rule desired
 	desired := []ForwardRule{
-		{BackendIP: "192.168.1.1", BackendPort: 8080, Protocol: "tcp"},
+		{VIP: "10.0.0.1", VIPPort: 80, Protocol: "tcp"},
 	}
 	if err := mgr.ReconcileForward(desired); err != nil {
 		t.Fatalf("second ReconcileForward failed: %v", err)
@@ -241,7 +243,7 @@ func TestFakeManager_ReconcileForwardRemoveStaleRules(t *testing.T) {
 	if len(managed) != 1 {
 		t.Fatalf("expected 1 managed FORWARD rule after removal, got %d", len(managed))
 	}
-	if _, exists := managed["192.168.1.2:8080/tcp"]; exists {
+	if _, exists := managed["10.0.0.2:80/tcp"]; exists {
 		t.Error("expected FORWARD rule 192.168.1.2:8080/tcp to be removed")
 	}
 }
@@ -254,14 +256,14 @@ func TestFakeManager_CleanupIncludesForwardRules(t *testing.T) {
 
 	// Add SNAT and FORWARD rules
 	snatRules := []SNATRule{
-		{BackendIP: "192.168.1.1", BackendPort: 8080, Protocol: "tcp", SnatIP: "10.0.0.1"},
+		{VIP: "10.0.0.1", VIPPort: 80, BackendIP: "192.168.1.1", BackendPort: 8080, Protocol: "tcp", SnatIP: "10.0.0.1"},
 	}
 	if err := mgr.Reconcile(snatRules); err != nil {
 		t.Fatalf("Reconcile failed: %v", err)
 	}
 
 	forwardRules := []ForwardRule{
-		{BackendIP: "192.168.1.1", BackendPort: 8080, Protocol: "tcp"},
+		{VIP: "10.0.0.1", VIPPort: 80, Protocol: "tcp"},
 	}
 	if err := mgr.ReconcileForward(forwardRules); err != nil {
 		t.Fatalf("ReconcileForward failed: %v", err)

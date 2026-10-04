@@ -1,3 +1,5 @@
+//go:build !linux || fake || integration
+
 package lvs
 
 import (

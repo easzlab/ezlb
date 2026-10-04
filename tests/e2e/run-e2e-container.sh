@@ -20,16 +20,14 @@ echo "==> Building e2e test image..."
 docker build -f "${PROJECT_ROOT}/Dockerfile.e2e" -t "${IMAGE_NAME}" "${PROJECT_ROOT}"
 
 echo "==> Running e2e tests in container..."
-# --privileged grants the container full access to the host kernel, which is
-# required for modprobe (loading IPVS modules) and IPVS netlink operations.
-# On macOS with Colima/Docker Desktop the "host kernel" is the Linux VM managed
-# by the container runtime, so --privileged is both safe and necessary.
+# --privileged permits modprobe and IPVS netlink operations. The container must
+# keep its own network namespace: these tests flush its entire IPVS table.
 #
 # -v /lib/modules:/lib/modules:ro mounts the host VM's kernel module directory
 # into the container so that modprobe can locate and load the ip_vs modules.
 # This is required because the container image does not ship kernel modules.
 docker run --rm \
   --privileged \
-  --network host \
+  --network bridge \
   -v /lib/modules:/lib/modules:ro \
   "${IMAGE_NAME}"

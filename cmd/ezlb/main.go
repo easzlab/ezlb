@@ -16,11 +16,12 @@ import (
 )
 
 var (
-	BuildTime   string
-	BuildCommit string
-	Version     = "0.5.1"
-	configPath  string
-	showVersion bool
+	BuildTime      string
+	BuildCommit    string
+	Version        = "0.5.1"
+	configPath     string
+	showVersion    bool
+	exclusiveNetns bool
 )
 
 func main() {
@@ -64,6 +65,7 @@ func newOnceCommand() *cobra.Command {
 	}
 
 	onceCmd.Flags().StringVarP(&configPath, "config", "c", "config.yaml", "Path to config file")
+	onceCmd.Flags().BoolVar(&exclusiveNetns, "exclusive-netns", false, "Confirm that ezlb owns all IPVS rules in this network namespace")
 	return onceCmd
 }
 
@@ -75,11 +77,15 @@ func newStartCommand() *cobra.Command {
 	}
 
 	startCmd.Flags().StringVarP(&configPath, "config", "c", "config.yaml", "Path to config file")
+	startCmd.Flags().BoolVar(&exclusiveNetns, "exclusive-netns", false, "Confirm that ezlb owns all IPVS rules in this network namespace")
 	return startCmd
 }
 
 // startDaemon starts the server in daemon mode with signal handling.
 func startDaemon(cmd *cobra.Command, args []string) error {
+	if runtime.GOOS == "linux" && !exclusiveNetns {
+		return fmt.Errorf("--exclusive-netns is required: run ezlb in a dedicated network namespace")
+	}
 	// Phase 1: Bootstrap logger (stdout only, info level) for early startup messages
 	bootstrapLogger := logutil.NewBootstrapLogger()
 
@@ -134,6 +140,9 @@ func startDaemon(cmd *cobra.Command, args []string) error {
 
 // runOnce performs a single reconcile pass and exits.
 func runOnce(cmd *cobra.Command, args []string) error {
+	if runtime.GOOS == "linux" && !exclusiveNetns {
+		return fmt.Errorf("--exclusive-netns is required: run ezlb in a dedicated network namespace")
+	}
 	// Phase 1: Bootstrap logger
 	bootstrapLogger := logutil.NewBootstrapLogger()
 

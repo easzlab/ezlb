@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/easzlab/ezlb/pkg/config"
+	"github.com/easzlab/ezlb/pkg/lvs"
 	"github.com/easzlab/ezlb/pkg/metrics"
 	"go.uber.org/zap"
 )
@@ -131,8 +132,10 @@ func (c *Collector) gatherSnapshot() *TrafficSnapshot {
 func buildServiceConfigMap(services []config.ServiceConfig) map[string]config.ServiceConfig {
 	result := make(map[string]config.ServiceConfig, len(services))
 	for _, svc := range services {
-		key := svc.Listen + "/" + svc.Protocol
-		result[key] = svc
+		key, err := lvs.ServiceKeyFromConfig(svc)
+		if err == nil {
+			result[key.String()] = svc
+		}
 	}
 	return result
 }
