@@ -9,4 +9,4 @@ done
 sysctl -w net.ipv4.ip_forward=1
 sysctl -w net.ipv4.vs.conntrack=1
 
-exec /app/ezlb start --exclusive-netns -c /test/ezlb.yaml
+exec /app/ezlb start --netns-mode=exclusive -c /test/ezlb.yaml

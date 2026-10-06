@@ -31,4 +31,4 @@ docker run -d \
   -v /lib/modules:/lib/modules:ro \
   -v "${CONFIG_PATH}:/app/config.yaml:ro" \
   easzlab/ezlb:latest \
-  /app/ezlb start --exclusive-netns -c /app/config.yaml
+  /app/ezlb start --netns-mode=exclusive -c /app/config.yaml

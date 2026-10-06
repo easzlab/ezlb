@@ -35,18 +35,36 @@ type Reconciler struct {
 	healthMgr HealthChecker
 	snatMgr   snat.Manager
 	logger    *zap.Logger
-	managed   map[ServiceKey]*managedServiceInfo // metadata for metrics cleanup in this process
-	mu        sync.Mutex
+	// exclusiveNetns declares whether ezlb owns every IPVS service in the
+	// current network namespace. Shared mode is for integrations such as
+	// kubeasz, where kube-proxy owns unrelated IPVS services in the host
+	// namespace.
+	exclusiveNetns bool
+	managed        map[ServiceKey]*managedServiceInfo // metadata for metrics cleanup in this process
+	mu             sync.Mutex
 }
 
 // NewReconciler creates a new Reconciler.
 func NewReconciler(manager *Manager, healthMgr HealthChecker, snatMgr snat.Manager, logger *zap.Logger) *Reconciler {
+	return newReconciler(manager, healthMgr, snatMgr, logger, true)
+}
+
+// NewSharedNetnsReconciler creates a reconciler that only manages services it
+// has created or adopted from its current configuration. It is safe to use in
+// a network namespace that also contains IPVS services managed by another
+// component, such as Kubernetes kube-proxy.
+func NewSharedNetnsReconciler(manager *Manager, healthMgr HealthChecker, snatMgr snat.Manager, logger *zap.Logger) *Reconciler {
+	return newReconciler(manager, healthMgr, snatMgr, logger, false)
+}
+
+func newReconciler(manager *Manager, healthMgr HealthChecker, snatMgr snat.Manager, logger *zap.Logger, exclusiveNetns bool) *Reconciler {
 	return &Reconciler{
-		manager:   manager,
-		healthMgr: healthMgr,
-		snatMgr:   snatMgr,
-		logger:    logger,
-		managed:   make(map[ServiceKey]*managedServiceInfo),
+		manager:        manager,
+		healthMgr:      healthMgr,
+		snatMgr:        snatMgr,
+		logger:         logger,
+		exclusiveNetns: exclusiveNetns,
+		managed:        make(map[ServiceKey]*managedServiceInfo),
 	}
 }
 
@@ -80,8 +98,12 @@ func (r *Reconciler) Reconcile(desiredConfigs []config.ServiceConfig) error {
 	actualMap := make(map[ServiceKey]*Service)
 	for _, svc := range actualServices {
 		key := ServiceKeyFromIPVS(svc)
-		// ezlb owns the complete IPVS table in its dedicated network namespace.
 		actualMap[key] = svc
+	}
+
+	previouslyManaged := make(map[ServiceKey]*managedServiceInfo, len(r.managed))
+	for key, info := range r.managed {
+		previouslyManaged[key] = info
 	}
 
 	var reconcileErrors []error
@@ -114,20 +136,29 @@ func (r *Reconciler) Reconcile(desiredConfigs []config.ServiceConfig) error {
 		}
 	}
 
-	// Delete services that are in actual but not in desired.
-	for key, actual := range actualMap {
-		if _, exists := desiredMap[key]; !exists {
-			if err := r.manager.DeleteService(actual); err != nil {
-				reconcileErrors = append(reconcileErrors, fmt.Errorf("delete service %s: %w", key, err))
-			} else {
-				if info := r.managed[key]; info != nil {
-					metrics.DeleteServiceMetrics(info.Name, info.Listen, info.Protocol)
-					for _, backend := range info.Backends {
-						metrics.DeleteBackendMetrics(info.Name, backend, info.Protocol)
-					}
-				}
-				delete(r.managed, key)
+	if r.exclusiveNetns {
+		// An exclusive namespace belongs wholly to ezlb, so remove every
+		// service no longer declared in the configuration.
+		for key, actual := range actualMap {
+			if _, exists := desiredMap[key]; !exists {
+				r.deleteService(key, actual, &reconcileErrors)
 			}
+		}
+	} else {
+		// In a shared namespace, never delete services merely because they are
+		// absent from this configuration: another controller may own them.
+		// Only remove a service tracked by this reconciler before the current
+		// update, which covers a service deleted from a hot-reloaded config.
+		for key := range previouslyManaged {
+			if _, exists := desiredMap[key]; exists {
+				continue
+			}
+			actual, exists := actualMap[key]
+			if !exists {
+				delete(r.managed, key)
+				continue
+			}
+			r.deleteService(key, actual, &reconcileErrors)
 		}
 	}
 
@@ -149,7 +180,9 @@ func (r *Reconciler) Reconcile(desiredConfigs []config.ServiceConfig) error {
 	return nil
 }
 
-// Cleanup removes all IPVS services in ezlb's dedicated network namespace.
+// Cleanup removes managed IPVS services. In exclusive mode it removes every
+// service in the namespace; in shared mode it preserves services owned by
+// other controllers.
 func (r *Reconciler) Cleanup() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -165,11 +198,26 @@ func (r *Reconciler) Cleanup() error {
 	}
 
 	var errs []error
-	for key, svc := range actualMap {
-		if err := r.manager.DeleteService(svc); err != nil {
-			errs = append(errs, fmt.Errorf("delete service %s: %w", key, err))
-		} else {
-			delete(r.managed, key)
+	if r.exclusiveNetns {
+		for key, svc := range actualMap {
+			if err := r.manager.DeleteService(svc); err != nil {
+				errs = append(errs, fmt.Errorf("delete service %s: %w", key, err))
+			} else {
+				delete(r.managed, key)
+			}
+		}
+	} else {
+		for key := range r.managed {
+			svc, exists := actualMap[key]
+			if !exists {
+				delete(r.managed, key)
+				continue
+			}
+			if err := r.manager.DeleteService(svc); err != nil {
+				errs = append(errs, fmt.Errorf("delete service %s: %w", key, err))
+			} else {
+				delete(r.managed, key)
+			}
 		}
 	}
 
@@ -177,8 +225,22 @@ func (r *Reconciler) Cleanup() error {
 		return errors.Join(errs...)
 	}
 	r.managed = make(map[ServiceKey]*managedServiceInfo)
-	r.logger.Info("cleaned up all IPVS services in the network namespace")
+	r.logger.Info("cleaned up managed IPVS services")
 	return nil
+}
+
+func (r *Reconciler) deleteService(key ServiceKey, actual *Service, reconcileErrors *[]error) {
+	if err := r.manager.DeleteService(actual); err != nil {
+		*reconcileErrors = append(*reconcileErrors, fmt.Errorf("delete service %s: %w", key, err))
+		return
+	}
+	if info := r.managed[key]; info != nil {
+		metrics.DeleteServiceMetrics(info.Name, info.Listen, info.Protocol)
+		for _, backend := range info.Backends {
+			metrics.DeleteBackendMetrics(info.Name, backend, info.Protocol)
+		}
+	}
+	delete(r.managed, key)
 }
 
 func newManagedServiceInfo(cfg config.ServiceConfig) *managedServiceInfo {

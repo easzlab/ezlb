@@ -685,6 +685,61 @@ func TestReconciler_ExclusiveNamespace_RemovesUnconfiguredService(t *testing.T) 
 	}
 }
 
+func TestReconciler_SharedNamespacePreservesUnmanagedServices(t *testing.T) {
+	mgr := newTestManager(t)
+	defer mgr.Close()
+
+	healthMgr := newMockHealthChecker()
+	snatMgr, _ := snat.NewManager(zap.NewNop())
+	reconciler := NewSharedNetnsReconciler(mgr, healthMgr, snatMgr, zap.NewNop())
+
+	// Simulate an IPVS service owned by kube-proxy before ezlb starts.
+	unmanaged := newTestService("10.96.0.10", 443, syscall.IPPROTO_TCP, "rr")
+	if err := mgr.CreateService(unmanaged); err != nil {
+		t.Fatalf("failed to create unmanaged service: %v", err)
+	}
+
+	configs := []config.ServiceConfig{
+		makeServiceConfig("kube-apiserver", "127.0.0.1:6443", "rr", false,
+			makeBackend("192.168.1.1:6443", 1)),
+	}
+	if err := reconciler.Reconcile(configs); err != nil {
+		t.Fatalf("Reconcile failed: %v", err)
+	}
+
+	services, err := mgr.GetServices()
+	if err != nil {
+		t.Fatalf("GetServices failed: %v", err)
+	}
+	if len(services) != 2 {
+		t.Fatalf("expected shared namespace to retain both services, got %d", len(services))
+	}
+
+	// Removing ezlb's service from its desired state must leave kube-proxy's
+	// service untouched.
+	if err := reconciler.Reconcile(nil); err != nil {
+		t.Fatalf("Reconcile removal failed: %v", err)
+	}
+	services, err = mgr.GetServices()
+	if err != nil {
+		t.Fatalf("GetServices after removal failed: %v", err)
+	}
+	if len(services) != 1 || !services[0].Address.Equal(unmanaged.Address) || services[0].Port != unmanaged.Port {
+		t.Fatalf("shared namespace did not preserve unmanaged service: %#v", services)
+	}
+
+	if err := reconciler.Cleanup(); err != nil {
+		t.Fatalf("Cleanup failed: %v", err)
+	}
+	services, err = mgr.GetServices()
+	if err != nil {
+		t.Fatalf("GetServices after cleanup failed: %v", err)
+	}
+	if len(services) != 1 || !services[0].Address.Equal(unmanaged.Address) || services[0].Port != unmanaged.Port {
+		t.Fatalf("Cleanup removed an unmanaged service: %#v", services)
+	}
+}
+
 func TestReconciler_Cleanup_EmptyManaged(t *testing.T) {
 	mgr, _, reconciler := newReconcilerTestEnv(t)
 	defer mgr.Close()

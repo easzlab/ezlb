@@ -61,11 +61,11 @@ services:
 	}
 }
 
-func TestE2E_RequiresExclusiveNamespaceAcknowledgement(t *testing.T) {
+func TestE2E_RequiresNamespaceMode(t *testing.T) {
 	cmd := exec.Command(ezlbBinary, "once", "-c", "missing.yaml")
 	output, err := cmd.CombinedOutput()
-	if err == nil || !strings.Contains(string(output), "--exclusive-netns is required") {
-		t.Fatalf("expected namespace acknowledgement error, got %v: %s", err, output)
+	if err == nil || !strings.Contains(string(output), "--netns-mode is required") {
+		t.Fatalf("expected namespace mode error, got %v: %s", err, output)
 	}
 }
 

@@ -47,18 +47,34 @@ type healthMetricKey struct {
 
 // NewServer initializes all modules and returns a ready-to-run Server.
 func NewServer(configPath string, logger *zap.Logger) (*Server, error) {
+	return newServer(configPath, logger, false)
+}
+
+// NewSharedNetnsServer creates a server that can coexist with other IPVS
+// controllers in the current network namespace. It only removes services that
+// it has managed itself, rather than treating the namespace as exclusively
+// owned by ezlb.
+func NewSharedNetnsServer(configPath string, logger *zap.Logger) (*Server, error) {
+	return newServer(configPath, logger, true)
+}
+
+func newServer(configPath string, logger *zap.Logger, sharedNetns bool) (*Server, error) {
 	// Initialize IPVS manager
 	lvsMgr, err := lvs.NewManager(logger.Named("lvs"))
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize IPVS manager: %w", err)
 	}
 
-	return newServerWithManager(configPath, lvsMgr, logger)
+	return newServerWithManagerAndMode(configPath, lvsMgr, logger, sharedNetns)
 }
 
 // newServerWithManager initializes a Server with a pre-created LVS Manager.
 // This allows tests to inject a platform-appropriate Manager instance.
 func newServerWithManager(configPath string, lvsMgr *lvs.Manager, logger *zap.Logger) (*Server, error) {
+	return newServerWithManagerAndMode(configPath, lvsMgr, logger, false)
+}
+
+func newServerWithManagerAndMode(configPath string, lvsMgr *lvs.Manager, logger *zap.Logger, sharedNetns bool) (*Server, error) {
 	// Initialize config manager
 	configMgr, err := config.NewManager(configPath, logger.Named("config"))
 	if err != nil {
@@ -86,8 +102,12 @@ func newServerWithManager(configPath string, lvsMgr *lvs.Manager, logger *zap.Lo
 		server.updateHealthMetrics()
 	}, logger.Named("healthcheck"))
 
-	// Initialize reconciler with health checker and SNAT manager
-	server.reconciler = lvs.NewReconciler(lvsMgr, server.healthMgr, snatMgr, logger.Named("reconciler"))
+	// Initialize reconciler with health checker and SNAT manager.
+	if sharedNetns {
+		server.reconciler = lvs.NewSharedNetnsReconciler(lvsMgr, server.healthMgr, snatMgr, logger.Named("reconciler"))
+	} else {
+		server.reconciler = lvs.NewReconciler(lvsMgr, server.healthMgr, snatMgr, logger.Named("reconciler"))
+	}
 
 	return server, nil
 }

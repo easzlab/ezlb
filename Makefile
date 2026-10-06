@@ -3,6 +3,8 @@ PROJECT_NAME := ezlb
 MODULE_NAME := github.com/easzlab/ezlb
 BUILD_TIME := $(shell date +%Y-%m-%d\ %H:%M:%S)
 BUILD_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+IMAGE ?= easzlab/ezlb
+IMAGE_TAG ?= dev
 #BUILD_BRANCH := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
 
 # Build configuration
@@ -45,9 +47,9 @@ build-linux: ## build the binary for Linux
 	@echo "✓ Linux build completed"
 
 .PHONY: build-docker
-build-docker: ## build docker image: easzlab/ezlb
-	@echo "Building easzlab/ezlb:latest ..."
-	@docker build -t easzlab/ezlb .
+build-docker: ## build docker image (IMAGE=easzlab/ezlb IMAGE_TAG=dev)
+	@echo "Building $(IMAGE):$(IMAGE_TAG) ..."
+	@docker build -t $(IMAGE):$(IMAGE_TAG) .
 	@echo "✓ Build completed."
 
 .PHONY: test

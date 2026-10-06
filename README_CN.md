@@ -79,16 +79,24 @@ sudo ip netns exec ezlb curl -i http://127.0.0.1:9095/ready
 # ezlb 独占其中所有 IPVS 服务；不要在宿主机默认命名空间运行。
 
 # 守护进程模式
-sudo ip netns exec ezlb ezlb start --exclusive-netns -c config.yaml
+sudo ip netns exec ezlb ezlb start --netns-mode=exclusive -c config.yaml
 
 # 单次 Reconcile
-sudo ip netns exec ezlb ezlb once --exclusive-netns -c config.yaml
+sudo ip netns exec ezlb ezlb once --netns-mode=exclusive -c config.yaml
+
+# 宿主网络集成（例如 kubeasz 的 kube-lb）。该模式会保留 kube-proxy
+# 及其他控制器拥有的 IPVS 服务。
+sudo ezlb start --netns-mode=shared -c config.yaml
 
 # 查看版本
 ezlb -v
 ```
 
-容器部署同样必须使用容器自己的网络命名空间（示例见 `docs/deploy/start-container.sh`）；Docker bridge 默认不会自动对外发布 VIP，需另行规划可达路由。`--exclusive-netns` 是操作员确认独占的显式开关，不会自动创建或隔离命名空间。
+容器部署同样必须使用容器自己的网络命名空间（示例见 `docs/deploy/start-container.sh`）；Docker bridge 默认不会自动对外发布 VIP，需另行规划可达路由。`--netns-mode=exclusive` 是操作员确认独占的显式开关，不会自动创建或隔离命名空间。
+
+`--netns-mode=shared` 用于 ezlb 必须和已有 IPVS 控制器共用宿主网络命名空间的场景。它只会 reconcile 当前配置中的服务，并且只会删除当前进程曾管理的服务，不会清理其他控制器的 IPVS 规则。不得与其他控制器复用同一虚拟 IP、端口和协议。IPVS NAT 服务启用 `full_nat: true` 时，需确保 `net.ipv4.ip_forward=1` 和 `net.ipv4.vs.conntrack=1`。
+
+Linux 上必须显式指定 `--netns-mode`，其值只能为 `exclusive` 或 `shared`。
 
 ## 测试
 

@@ -16,7 +16,7 @@ ExecStartPre=/usr/sbin/ip netns exec ezlb /sbin/sysctl -w net.ipv4.ip_forward=1
 ExecStartPre=/usr/sbin/ip netns exec ezlb /sbin/sysctl -w net.ipv4.vs.conntrack=1
 ExecStartPre=/usr/sbin/ip netns exec ezlb /sbin/sysctl -w net.ipv4.conf.all.rp_filter=0
 ExecStartPre=/usr/sbin/ip netns exec ezlb /sbin/sysctl -w net.ipv4.conf.default.rp_filter=0
-ExecStart=/usr/sbin/ip netns exec ezlb /opt/ezlb/ezlb start --exclusive-netns -c /opt/ezlb/config.yaml
+ExecStart=/usr/sbin/ip netns exec ezlb /opt/ezlb/ezlb start --netns-mode=exclusive -c /opt/ezlb/config.yaml
 Restart=on-failure
 RestartSec=10s
 LimitNOFILE=65536

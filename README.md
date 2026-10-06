@@ -80,16 +80,30 @@ Available metrics:
 # Never run it in the host's default network namespace.
 
 # Daemon mode
-sudo ip netns exec ezlb ezlb start --exclusive-netns -c config.yaml
+sudo ip netns exec ezlb ezlb start --netns-mode=exclusive -c config.yaml
 
 # Single reconcile pass
-sudo ip netns exec ezlb ezlb once --exclusive-netns -c config.yaml
+sudo ip netns exec ezlb ezlb once --netns-mode=exclusive -c config.yaml
+
+# Host-network integration (for example, kubeasz kube-lb). This mode preserves
+# IPVS services owned by kube-proxy and other controllers.
+sudo ezlb start --netns-mode=shared -c config.yaml
 
 # Show version
 ezlb -v
 ```
 
-Containers must likewise keep their own network namespace (see `docs/deploy/start-container.sh`). Docker bridge does not publish the VIP automatically; provide reachable routing separately. `--exclusive-netns` is an explicit operator assertion, not automatic namespace creation or isolation.
+Containers must likewise keep their own network namespace (see `docs/deploy/start-container.sh`). Docker bridge does not publish the VIP automatically; provide reachable routing separately. `--netns-mode=exclusive` is an explicit operator assertion, not automatic namespace creation or isolation.
+
+`--netns-mode=shared` is for the exceptional case where ezlb must coexist with an
+existing IPVS controller in the host namespace. It only reconciles services in
+its current configuration and only removes services it has managed in the
+current process; it never prunes unrelated IPVS services. Do not use the same
+virtual IP, port, and protocol as another controller. For IPVS NAT services
+with `full_nat: true`, ensure `net.ipv4.ip_forward=1` and
+`net.ipv4.vs.conntrack=1`.
+
+On Linux, `--netns-mode` is required and accepts only `exclusive` or `shared`.
 
 ## Testing
 
