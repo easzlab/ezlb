@@ -7,7 +7,9 @@ import (
 	"testing"
 
 	"github.com/easzlab/ezlb/pkg/config"
+	"github.com/easzlab/ezlb/pkg/metrics"
 	"github.com/easzlab/ezlb/pkg/snat"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -738,6 +740,95 @@ func TestReconciler_SharedNamespacePreservesUnmanagedServices(t *testing.T) {
 	if len(services) != 1 || !services[0].Address.Equal(unmanaged.Address) || services[0].Port != unmanaged.Port {
 		t.Fatalf("Cleanup removed an unmanaged service: %#v", services)
 	}
+}
+
+func TestReconcile_UnhealthyBackendKeepsHealthMetric(t *testing.T) {
+	mgr, health, reconciler := newReconcilerTestEnv(t)
+	defer mgr.Close()
+	const service = "health-metric-reconcile-test"
+	const backend = "192.168.1.31:8080"
+	configs := []config.ServiceConfig{
+		makeServiceConfig(service, "10.0.0.31:80", "rr", true, makeBackend(backend, 1)),
+	}
+	t.Cleanup(func() { metrics.DeleteBackendMetrics(service, backend, "tcp") })
+	if err := reconciler.Reconcile(configs); err != nil {
+		t.Fatal(err)
+	}
+	metrics.SetBackendHealth(service, backend, true)
+	health.status[backend] = false
+	metrics.SetBackendHealth(service, backend, false)
+	if err := reconciler.Reconcile(configs); err != nil {
+		t.Fatal(err)
+	}
+	if value, found := metricValue(t, "ezlb_backend_health_status", map[string]string{"service": service, "backend": backend}); !found || value != 0 {
+		t.Fatalf("unhealthy backend must retain health=0, found=%v value=%v", found, value)
+	}
+}
+
+func TestReconcile_ServiceRenameRemovesOldMetrics(t *testing.T) {
+	mgr, _, reconciler := newReconcilerTestEnv(t)
+	defer mgr.Close()
+	const oldName = "metric-rename-old"
+	const newName = "metric-rename-new"
+	const listen = "10.0.0.32:80"
+	const backend = "192.168.1.32:8080"
+	configs := []config.ServiceConfig{
+		makeServiceConfig(oldName, listen, "rr", false, makeBackend(backend, 1)),
+	}
+	t.Cleanup(func() {
+		metrics.DeleteServiceMetrics(oldName, listen, "tcp")
+		metrics.DeleteServiceMetrics(newName, listen, "tcp")
+		metrics.DeleteBackendMetrics(oldName, backend, "tcp")
+		metrics.DeleteBackendMetrics(newName, backend, "tcp")
+	})
+	if err := reconciler.Reconcile(configs); err != nil {
+		t.Fatal(err)
+	}
+	metrics.AddServiceTraffic(oldName, listen, "tcp", 1, 0, 0, 0, 0)
+	metrics.AddBackendTraffic(oldName, backend, "tcp", 1, 0, 0, 0, 0)
+	configs[0].Name = newName
+	if err := reconciler.Reconcile(configs); err != nil {
+		t.Fatal(err)
+	}
+	if _, found := metricValue(t, "ezlb_service_connections_total", map[string]string{"service": oldName}); found {
+		t.Fatal("old service metrics remained after rename")
+	}
+	if _, found := metricValue(t, "ezlb_backend_connections_total", map[string]string{"service": oldName}); found {
+		t.Fatal("old backend metrics remained after service rename")
+	}
+}
+
+func metricValue(t *testing.T, name string, wantLabels map[string]string) (float64, bool) {
+	t.Helper()
+	families, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range families {
+		if family.GetName() != name {
+			continue
+		}
+		for _, metric := range family.Metric {
+			labels := make(map[string]string, len(metric.Label))
+			for _, label := range metric.Label {
+				labels[label.GetName()] = label.GetValue()
+			}
+			matched := true
+			for key, value := range wantLabels {
+				if labels[key] != value {
+					matched = false
+					break
+				}
+			}
+			if matched {
+				if metric.Gauge != nil {
+					return metric.Gauge.GetValue(), true
+				}
+				return metric.Counter.GetValue(), true
+			}
+		}
+	}
+	return 0, false
 }
 
 func TestReconciler_Cleanup_EmptyManaged(t *testing.T) {

@@ -203,6 +203,13 @@ func TestDestinationKey_String(t *testing.T) {
 	}
 }
 
+func TestDestinationKey_StringIPv6(t *testing.T) {
+	key := DestinationKey{Address: "2001:db8::1", Port: 8080}
+	if got := key.String(); got != "[2001:db8::1]:8080" {
+		t.Fatalf("expected bracketed IPv6 backend label, got %q", got)
+	}
+}
+
 // --- ConfigToIPVS conversion tests ---
 
 func TestConfigToIPVSService_ValidTCP(t *testing.T) {

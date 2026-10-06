@@ -205,8 +205,10 @@ func DeleteBackendHealthMetrics(service, backend string) {
 	})
 }
 
-// DeleteBackendMetrics removes all metrics for a specific backend.
-func DeleteBackendMetrics(service, backend, protocol string) {
+// DeleteBackendTrafficMetrics removes traffic and connection metrics while
+// preserving health status. An unhealthy backend is removed from IPVS, but its
+// health gauge must remain visible at zero.
+func DeleteBackendTrafficMetrics(service, backend, protocol string) {
 	backendLabels := prometheus.Labels{
 		"service":  service,
 		"backend":  backend,
@@ -219,12 +221,13 @@ func DeleteBackendMetrics(service, backend, protocol string) {
 	backendPacketsOutTotal.Delete(backendLabels)
 	backendActiveConnections.Delete(backendLabels)
 	backendInactiveConnections.Delete(backendLabels)
+}
 
-	healthLabels := prometheus.Labels{
-		"service": service,
-		"backend": backend,
-	}
-	backendHealthStatus.Delete(healthLabels)
+// DeleteBackendMetrics removes all metrics for a backend that is no longer
+// present in the configuration.
+func DeleteBackendMetrics(service, backend, protocol string) {
+	DeleteBackendTrafficMetrics(service, backend, protocol)
+	DeleteBackendHealthMetrics(service, backend)
 }
 
 // DeleteServiceMetrics removes all metrics for a specific service.

@@ -158,6 +158,45 @@ func TestDeleteBackendMetrics(t *testing.T) {
 	t.Cleanup(func() { DeleteBackendMetrics(svc, backend, protocol) })
 }
 
+func TestDeleteBackendTrafficMetricsPreservesHealth(t *testing.T) {
+	const (
+		svc      = "metrics-test-unhealthy"
+		backend  = "192.168.1.30:8080"
+		protocol = "tcp"
+	)
+	AddBackendTraffic(svc, backend, protocol, 2, 0, 0, 0, 0)
+	SetBackendHealth(svc, backend, false)
+	t.Cleanup(func() { DeleteBackendMetrics(svc, backend, protocol) })
+
+	DeleteBackendTrafficMetrics(svc, backend, protocol)
+
+	families, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, family := range families {
+		if family.GetName() != "ezlb_backend_health_status" {
+			continue
+		}
+		for _, metric := range family.Metric {
+			labels := map[string]string{}
+			for _, label := range metric.Label {
+				labels[label.GetName()] = label.GetValue()
+			}
+			if labels["service"] == svc && labels["backend"] == backend {
+				found = true
+				if metric.GetGauge().GetValue() != 0 {
+					t.Fatalf("expected unhealthy gauge=0, got %v", metric.GetGauge().GetValue())
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatal("unhealthy backend health series was removed")
+	}
+}
+
 func TestDeleteServiceMetrics(t *testing.T) {
 	const (
 		svc      = "metrics-test-delete-service"

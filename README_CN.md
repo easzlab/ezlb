@@ -6,6 +6,8 @@
 
 ## 特性
 
+[项目架构与测试层次](docs/ARCHITECTURE.md)
+
 - **IPVS 内核级负载均衡**：基于 Linux IPVS 实现高性能四层 TCP/UDP 转发
 - **声明式 Reconcile**：在 ezlb 独占的网络命名空间内管理整个 IPVS 表，启动和每 30 秒同步期望状态
 - **多种调度算法**：支持轮询 (rr)、加权轮询 (wrr)、最少连接 (lc)、加权最少连接 (wlc)、目标地址哈希 (dh)、源地址哈希 (sh)

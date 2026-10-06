@@ -4,12 +4,78 @@ package e2e
 
 import (
 	"bytes"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"os/exec"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 )
+
+// The health series must stay visible at zero after IPVS removes an unhealthy
+// destination. This exercises the daemon, probe, reconcile and HTTP metrics
+// endpoint together in the disposable test namespace.
+func TestE2E_UnhealthyBackendHealthMetricRemainsVisible(t *testing.T) {
+	flushIPVS(t)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminAddr := listener.Addr().String()
+	listener.Close()
+
+	configPath := writeTestConfig(t, t.TempDir(), fmt.Sprintf(`
+global:
+  admin_address: %s
+services:
+  - name: unhealthy-e2e
+    listen: 10.0.0.41:80
+    protocol: tcp
+    scheduler: rr
+    health_check:
+      interval: 100ms
+      timeout: 100ms
+      fail_count: 1
+    backends:
+      - address: 127.0.0.1:1
+        weight: 1
+`, adminAddr))
+	cmd := runEzlbDaemon(t, configPath)
+	t.Cleanup(func() {
+		_ = cmd.Process.Signal(syscall.SIGTERM)
+		done := make(chan struct{})
+		go func() { _ = cmd.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			_ = cmd.Process.Kill()
+			<-done
+		}
+		flushIPVS(t)
+	})
+
+	client := &http.Client{Timeout: time.Second}
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := client.Get("http://" + adminAddr + "/metrics")
+		if err == nil {
+			body, readErr := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if readErr == nil && resp.StatusCode == http.StatusOK &&
+				strings.Contains(string(body), `ezlb_backend_health_status{backend="127.0.0.1:1",service="unhealthy-e2e"} 0`) {
+				svc := findServiceByAddress(getIPVSServices(t), "10.0.0.41", 80)
+				if svc != nil && len(getIPVSDestinations(t, svc)) == 0 {
+					return
+				}
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatal("unhealthy backend was not removed from IPVS with a visible health=0 metric")
+}
 
 // --- Test 1: Single service with once mode ---
 

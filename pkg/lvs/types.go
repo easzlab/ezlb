@@ -46,7 +46,7 @@ type DestinationKey struct {
 
 // String returns a human-readable representation of the DestinationKey.
 func (k DestinationKey) String() string {
-	return fmt.Sprintf("%s:%d", k.Address, k.Port)
+	return net.JoinHostPort(k.Address, strconv.Itoa(int(k.Port)))
 }
 
 // protocolFromString converts a protocol string to its syscall constant.

@@ -118,10 +118,8 @@ func (r *Reconciler) Reconcile(desiredConfigs []config.ServiceConfig) error {
 				reconcileErrors = append(reconcileErrors, fmt.Errorf("create service %s: %w", key, err))
 				continue
 			}
-			r.managed[key] = newManagedServiceInfo(desired.config)
 		} else {
 			// Service exists -> mark as managed and check if scheduler needs update
-			r.managed[key] = newManagedServiceInfo(desired.config)
 			if actual.SchedName != desired.service.SchedName {
 				if err := r.manager.UpdateService(desired.service); err != nil {
 					reconcileErrors = append(reconcileErrors, fmt.Errorf("update service %s: %w", key, err))
@@ -129,6 +127,15 @@ func (r *Reconciler) Reconcile(desiredConfigs []config.ServiceConfig) error {
 				}
 			}
 		}
+		info := newManagedServiceInfo(desired.config)
+		if previous := r.managed[key]; previous != nil &&
+			(previous.Name != info.Name || previous.Listen != info.Listen || previous.Protocol != info.Protocol) {
+			metrics.DeleteServiceMetrics(previous.Name, previous.Listen, previous.Protocol)
+			for _, backend := range previous.Backends {
+				metrics.DeleteBackendMetrics(previous.Name, backend, previous.Protocol)
+			}
+		}
+		r.managed[key] = info
 
 		// Phase 4: Destination-level diff for this service
 		if err := r.reconcileDestinations(desired); err != nil {
@@ -247,6 +254,13 @@ func newManagedServiceInfo(cfg config.ServiceConfig) *managedServiceInfo {
 	backends := make([]string, len(cfg.Backends))
 	for i, b := range cfg.Backends {
 		backends[i] = b.Address
+		if host, port, err := net.SplitHostPort(b.Address); err == nil {
+			if ip := net.ParseIP(host); ip != nil {
+				if n, err := strconv.Atoi(port); err == nil {
+					backends[i] = net.JoinHostPort(ip.String(), strconv.Itoa(n))
+				}
+			}
+		}
 	}
 	return &managedServiceInfo{
 		Name:     cfg.Name,
@@ -425,7 +439,7 @@ func (r *Reconciler) reconcileDestinations(desired *desiredService) error {
 			if err := r.manager.DeleteDestination(desired.service, actualDst); err != nil {
 				reconcileErrors = append(reconcileErrors, fmt.Errorf("delete destination %s: %w", key, err))
 			} else {
-				metrics.DeleteBackendMetrics(desired.config.Name, key.String(), desired.config.Protocol)
+				metrics.DeleteBackendTrafficMetrics(desired.config.Name, key.String(), desired.config.Protocol)
 			}
 		}
 	}
